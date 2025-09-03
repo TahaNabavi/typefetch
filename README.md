@@ -18,9 +18,9 @@ TypeFetch is a type-safe client for working with APIs, built with TypeScript and
 ## Installation
 
 ```bash
-npm install typefetch
+npm install @tahanabavi/typefetch
 # or
-yarn add typefetch
+yarn add @tahanabavi/typefetch
 ```
 
 ---
