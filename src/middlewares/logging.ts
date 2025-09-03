@@ -1,4 +1,4 @@
-import { Middleware } from "../types";
+import { Middleware } from "@/types";
 
 export type LoggingOptions = {
   logRequest?: boolean;
@@ -6,7 +6,11 @@ export type LoggingOptions = {
   debug?: boolean;
 };
 
-export const loggingMiddleware: Middleware<LoggingOptions> = async (ctx, next, options) => {
+export const loggingMiddleware: Middleware<LoggingOptions> = async (
+  ctx,
+  next,
+  options
+) => {
   const { logRequest = true, logResponse = true, debug = true } = options || {};
 
   if (debug && logRequest) console.log("➡️ Request:", ctx.url, ctx.init);

@@ -1,4 +1,4 @@
-import { MiddlewareContext, MiddlewareNext } from "../types";
+import { MiddlewareContext, MiddlewareNext } from "@/types";
 
 export type CacheOptions = { ttl?: number };
 

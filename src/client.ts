@@ -5,7 +5,7 @@ import {
   Middleware,
   ErrorLike,
   EndpointMethods,
-} from "./types";
+} from "@/types";
 import { z } from "zod";
 
 export class RichError extends Error implements ErrorLike {

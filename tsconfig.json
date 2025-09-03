@@ -1,13 +1,14 @@
 {
   "compilerOptions": {
-    "target": "ES2020",
-    "module": "NodeNext",
-    "moduleResolution": "NodeNext",
+    "target": "es2015",
+    "module": "commonjs",
+    "outDir": "./dist",
+    "sourceMap": true,
     "declaration": true,
-    "outDir": "dist",
-    "strict": true,
-    "esModuleInterop": true,
-    "forceConsistentCasingInFileNames": true
+    "paths": {
+      "@/*": ["./src/*"]
+    }
   },
-  "include": ["src", "__test__"]
+  "include": ["src"],
+  "exclude": ["node_modules"]
 }
