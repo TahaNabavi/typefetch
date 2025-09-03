@@ -6,12 +6,12 @@ TypeFetch is a type-safe client for working with APIs, built with TypeScript and
 
 ## Features
 
-* Fully type-safe using TypeScript and Zod
-* Define contracts for modules and endpoints
-* Support for middlewares to add custom behavior before or after requests
-* Error handling with the `RichError` class
-* Ability to transform responses using a response transformer
-* Authentication support via token
+- Fully type-safe using TypeScript and Zod
+- Define contracts for modules and endpoints
+- Support for middlewares to add custom behavior before or after requests
+- Error handling with the `RichError` class
+- Ability to transform responses using a response transformer
+- Authentication support via token
 
 ---
 
@@ -68,8 +68,10 @@ const client = new ApiClient(
 
 client.init();
 
-const user = await client.user.getUser({ id: "123" });
-const newUser = await client.user.createUser({ name: "Taha" });
+const { modules: api } = client;
+
+const user = await api.user.getUser({ id: "123" });
+const newUser = await api.user.createUser({ name: "Taha" });
 ```
 
 ---
@@ -91,12 +93,14 @@ client.onError((error: RichError) => {
 You can add custom behavior before or after requests. Middlewares work similarly to Express:
 
 ```ts
-client.use(async (ctx, next, options) => {
-  console.log("Request URL:", ctx.url);
-  const response = await next();
-  console.log("Response status:", response.status);
-  return response;
-});
+client.use(
+  async (ctx: MiddlewareContext, next: MiddlewareNext, options?: any) => {
+    console.log("Request URL:", ctx.url);
+    const response = await next();
+    console.log("Response status:", response.status);
+    return response;
+  }
+);
 ```
 
 ### Built-in Middlewares
@@ -117,10 +121,10 @@ client.use(AuthMiddleware, { refreshToken: () => "your-auth-token" });
 client.use(CacheMiddleware, { ttl: 60 * 1000 });
 ```
 
-* `LoggingMiddleware` – Logs requests and responses
-* `RetryMiddleware` – Retries failed requests
-* `AuthMiddleware` – Automatically adds Authorization headers
-* `CacheMiddleware` – Caches responses to reduce repeated requests
+- `LoggingMiddleware` – Logs requests and responses
+- `RetryMiddleware` – Retries failed requests
+- `AuthMiddleware` – Automatically adds Authorization headers
+- `CacheMiddleware` – Caches responses to reduce repeated requests
 
 ---
 
@@ -138,9 +142,9 @@ client.useResponseTransform((data) => {
 
 ## Important Notes
 
-* Always call `client.init()` before using endpoints.
-* Types are automatically inferred from Zod, making inputs and outputs type-safe.
-* Middleware execution order: first added middleware runs last, last added middleware runs first.
+- Always call `client.init()` before using endpoints.
+- Types are automatically inferred from Zod, making inputs and outputs type-safe.
+- Middleware execution order: first added middleware runs last, last added middleware runs first.
 
 ---
 
@@ -176,8 +180,10 @@ client.onError((err: RichError) => {
   console.error("Error:", err.message);
 });
 
+const { modules: api } = client;
+
 (async () => {
-  const post = await client.post.getPost({ id: "1" });
+  const post = await api.post.getPost({ id: "1" });
   console.log(post);
 })();
 ```

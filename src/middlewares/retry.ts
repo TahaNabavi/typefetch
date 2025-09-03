@@ -1,4 +1,5 @@
-import { Middleware } from "../types";
+import { Middleware } from "@/types";
+
 
 export type RetryOptions = {
   maxRetries?: number;
@@ -16,7 +17,7 @@ export const retryMiddleware = (options?: RetryOptions): Middleware => {
       } catch (err) {
         if (attempt >= maxRetries) throw err;
         attempt++;
-        await new Promise(r => setTimeout(r, delay * 2 ** attempt));
+        await new Promise((r) => setTimeout(r, delay * 2 ** attempt));
       }
     }
   };
