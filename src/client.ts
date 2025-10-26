@@ -25,15 +25,26 @@ export class ApiClient<C extends Contracts, E extends ErrorLike = RichError> {
   private middlewares: Array<{ fn: Middleware; options?: any }> = [];
   private errorHandler?: (error: E) => void;
   private responseTransform: (data: any) => any = (d) => d;
+  private useMockData: boolean = false;
+  private mockDelay: { min: number; max: number } = { min: 100, max: 1000 };
+  private responseWrapper?: (successResponse: z.ZodTypeAny) => z.ZodTypeAny;
 
   private _modules!: {
     [M in keyof C]: EndpointMethods<C[M]>;
   };
 
   constructor(
-    private config: { baseUrl: string; token?: string },
+    private config: {
+      baseUrl: string;
+      token?: string;
+      useMockData?: boolean;
+      mockDelay?: { min: number; max: number };
+    },
     private contracts: C
-  ) {}
+  ) {
+    this.useMockData = config.useMockData || false;
+    this.mockDelay = config.mockDelay || { min: 100, max: 1000 };
+  }
 
   init() {
     const modules = {} as {
@@ -72,11 +83,26 @@ export class ApiClient<C extends Contracts, E extends ErrorLike = RichError> {
     this.responseTransform = fn;
   }
 
+  setMockMode(enabled: boolean, delay?: { min: number; max: number }) {
+    this.useMockData = enabled;
+    if (delay) {
+      this.mockDelay = delay;
+    }
+  }
+
+  setResponseWrapper(wrapper: (successResponse: z.ZodTypeAny) => z.ZodTypeAny) {
+    this.responseWrapper = wrapper;
+  }
+
   private async request<TReq extends z.ZodTypeAny, TRes extends z.ZodTypeAny>(
     endpoint: EndpointDef<TReq, TRes>,
     input: z.infer<TReq>
   ): Promise<z.infer<TRes>> {
     endpoint.request.parse(input);
+
+    if (this.useMockData && endpoint.mockData) {
+      return this.handleMockRequest(endpoint);
+    }
 
     if (endpoint.auth && !this.config.token) {
       const error = this.createError({
@@ -108,27 +134,87 @@ export class ApiClient<C extends Contracts, E extends ErrorLike = RichError> {
 
     try {
       const res = await runner();
+      const json = await res.json();
+
+      let responseData = json;
+      if (this.responseWrapper) {
+        const wrappedSchema = this.responseWrapper(endpoint.response);
+        const parsedResponse = wrappedSchema.parse(json);
+
+        if (parsedResponse.success === false) {
+          const error = this.createError({
+            message: parsedResponse.message || "Request failed",
+            status: parsedResponse.code || res.status,
+            code: `API_ERROR_${parsedResponse.code}`,
+          });
+          this.errorHandler?.(error as unknown as E);
+          throw error;
+        }
+
+        responseData = parsedResponse.data;
+      }
+
       if (!res.ok) {
-        const errorData = await res.json().catch(() => ({}));
         const error = this.createError({
-          message: errorData.message || res.statusText,
+          message: json.message || res.statusText,
           status: res.status,
-          code: errorData.code,
-          title: errorData.title,
-          detail: errorData.detail,
-          errors: errorData.errors,
+          code: json.code,
+          title: json.title,
+          detail: json.detail,
+          errors: json.errors,
         });
         this.errorHandler?.(error as unknown as E);
         throw error;
       }
 
-      const json = await res.json();
-      return this.responseTransform(endpoint.response.parse(json));
+      return this.responseTransform(endpoint.response.parse(responseData));
     } catch (err: any) {
       const error = this.normalizeError(err);
       this.errorHandler?.(error as unknown as E);
       throw error;
     }
+  }
+
+  private async handleMockRequest<
+    TReq extends z.ZodTypeAny,
+    TRes extends z.ZodTypeAny
+  >(endpoint: EndpointDef<TReq, TRes>): Promise<z.infer<TRes>> {
+    const delay = this.getRandomDelay();
+    await new Promise((resolve) => setTimeout(resolve, delay));
+
+    let mockData: z.infer<TRes>;
+    if (typeof endpoint.mockData === "function") {
+      mockData = (endpoint.mockData as () => z.infer<TRes>)();
+    } else {
+      mockData = endpoint.mockData as z.infer<TRes>;
+    }
+
+    if (this.responseWrapper) {
+      const wrappedSchema = this.responseWrapper(endpoint.response);
+
+      const mockWrappedResponse = {
+        success: true,
+        data: mockData,
+        timestamp: new Date().toISOString(),
+        requestId: `mock-${Math.random().toString(36).substr(2, 9)}`,
+      };
+
+      const parsedWrappedResponse = wrappedSchema.parse(mockWrappedResponse);
+
+      return this.responseTransform(
+        endpoint.response.parse(parsedWrappedResponse.data)
+      );
+    }
+
+    return this.responseTransform(endpoint.response.parse(mockData));
+  }
+
+  private getRandomDelay(): number {
+    return (
+      Math.floor(
+        Math.random() * (this.mockDelay.max - this.mockDelay.min + 1)
+      ) + this.mockDelay.min
+    );
   }
 
   private createError(error: Partial<RichError> & { message: string }) {

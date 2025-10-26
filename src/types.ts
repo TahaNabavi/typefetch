@@ -9,6 +9,7 @@ export type EndpointDef<
   auth?: boolean;
   request: TReq;
   response: TRes;
+  mockData?: (() => z.infer<TRes>) | z.infer<TRes>;
 };
 
 export type Contracts = {

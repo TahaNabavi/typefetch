@@ -2,7 +2,6 @@ import { z, ZodError } from "zod";
 import { ApiClient, RichError } from "../client";
 import { Contracts } from "../types";
 
-// Mock fetch globally
 global.fetch = jest.fn();
 
 const contracts: Contracts = {
@@ -12,6 +11,8 @@ const contracts: Contracts = {
       path: "/user",
       request: z.object({ id: z.string() }),
       response: z.object({ id: z.string(), name: z.string() }),
+      // Add mock data for testing
+      mockData: { id: "mock-1", name: "Mock User" },
     },
     createUser: {
       method: "POST",
@@ -19,6 +20,18 @@ const contracts: Contracts = {
       auth: true,
       request: z.object({ name: z.string() }),
       response: z.object({ id: z.string(), name: z.string() }),
+      // Add dynamic mock data function
+      mockData: () => ({
+        id: `mock-${Math.random().toString(36).substr(2, 6)}`,
+        name: "Dynamic Mock User",
+      }),
+    },
+    listUsers: {
+      method: "GET",
+      path: "/users",
+      request: z.object({}),
+      response: z.array(z.object({ id: z.string(), name: z.string() })),
+      // No mock data for this endpoint
     },
   },
 };
@@ -53,9 +66,10 @@ describe("ApiClient", () => {
   });
 
   it("should throw validation error if input is invalid", async () => {
-  await expect(client.modules.user.getUser({} as any))
-    .rejects.toBeInstanceOf(ZodError);
-});
+    await expect(client.modules.user.getUser({} as any)).rejects.toBeInstanceOf(
+      ZodError
+    );
+  });
 
   it("should handle auth header when token is provided", async () => {
     const authedClient = new ApiClient(
@@ -133,5 +147,205 @@ describe("ApiClient", () => {
     await client.modules.user.getUser({ id: "1" });
 
     expect(logs).toEqual(["before", "after"]);
+  });
+
+  describe("Mock Data Feature", () => {
+    it("should use mock data when mock mode is enabled", async () => {
+      client.setMockMode(true, { min: 0, max: 0 });
+      const result = await client.modules.user.getUser({ id: "1" });
+
+      expect(result).toEqual({ id: "mock-1", name: "Mock User" });
+      expect(fetch).not.toHaveBeenCalled();
+    });
+
+    it("should use dynamic mock data function when provided", async () => {
+      client.setMockMode(true, { min: 0, max: 0 });
+
+      const result1 = await client.modules.user.createUser({ name: "Test" });
+      const result2 = await client.modules.user.createUser({ name: "Test" });
+
+      expect(result1.id).toMatch(/^mock-/);
+      expect(result1.name).toBe("Dynamic Mock User");
+      expect(result2.id).not.toBe(result1.id);
+      expect(fetch).not.toHaveBeenCalled();
+    });
+
+    it("should fall back to real API when mock data is not provided", async () => {
+      client.setMockMode(true, { min: 0, max: 0 });
+
+      (fetch as jest.Mock).mockResolvedValueOnce({
+        ok: true,
+        json: async () => [{ id: "1", name: "User1" }],
+      });
+
+      const result = await client.modules.user.listUsers({});
+
+      expect(result).toEqual([{ id: "1", name: "User1" }]);
+      expect(fetch).toHaveBeenCalled();
+    });
+
+    it("should add random delay when using mock data", async () => {
+      const mockDateNow = jest
+        .spyOn(Date, "now")
+        .mockReturnValueOnce(0)
+        .mockReturnValueOnce(100);
+
+      client.setMockMode(true, { min: 100, max: 100 });
+
+      const result = await client.modules.user.getUser({ id: "1" });
+
+      expect(result).toEqual({ id: "mock-1", name: "Mock User" });
+      expect(fetch).not.toHaveBeenCalled();
+
+      mockDateNow.mockRestore();
+    });
+
+    it("should toggle mock mode at runtime", async () => {
+      client.setMockMode(true, { min: 0, max: 0 });
+      let result = await client.modules.user.getUser({ id: "1" });
+      expect(result).toEqual({ id: "mock-1", name: "Mock User" });
+      expect(fetch).not.toHaveBeenCalled();
+
+      client.setMockMode(false);
+      (fetch as jest.Mock).mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ id: "real-1", name: "Real User" }),
+      });
+
+      result = await client.modules.user.getUser({ id: "1" });
+      expect(result).toEqual({ id: "real-1", name: "Real User" });
+      expect(fetch).toHaveBeenCalled();
+    });
+  });
+
+  describe("Response Wrapper Feature", () => {
+    const createApiResponseWrapper = (successResponse: z.ZodTypeAny) =>
+      z.union([
+        z.object({
+          success: z.literal(true),
+          data: successResponse,
+          timestamp: z.string(),
+          requestId: z.string(),
+        }),
+        z.object({
+          success: z.literal(false),
+          message: z.string(),
+          code: z.number(),
+          timestamp: z.string(),
+          requestId: z.string(),
+        }),
+      ]);
+
+    it("should validate and unwrap successful wrapped responses", async () => {
+      client.setResponseWrapper(createApiResponseWrapper);
+
+      (fetch as jest.Mock).mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          success: true,
+          data: { id: "1", name: "John" },
+          timestamp: "2024-01-15T10:30:00Z",
+          requestId: "req-123",
+        }),
+      });
+
+      const result = await client.modules.user.getUser({ id: "1" });
+
+      expect(result).toEqual({ id: "1", name: "John" });
+    });
+
+    it("should throw error for failed wrapped responses", async () => {
+      client.setResponseWrapper(createApiResponseWrapper);
+
+      (fetch as jest.Mock).mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          success: false,
+          message: "User not found",
+          code: 404,
+          timestamp: "2024-01-15T10:30:00Z",
+          requestId: "req-123",
+        }),
+      });
+
+      await expect(client.modules.user.getUser({ id: "999" })).rejects.toThrow(
+        RichError
+      );
+    });
+
+    it("should work with mock data and response wrapper", async () => {
+      client.setResponseWrapper(createApiResponseWrapper);
+      client.setMockMode(true, { min: 0, max: 0 });
+
+      const result = await client.modules.user.getUser({ id: "1" });
+
+      expect(result).toEqual({ id: "mock-1", name: "Mock User" });
+    });
+
+    it("should throw validation error for invalid wrapped response format", async () => {
+      client.setResponseWrapper(createApiResponseWrapper);
+
+      (fetch as jest.Mock).mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          invalid: "format",
+        }),
+      });
+
+      try {
+        await client.modules.user.getUser({ id: "1" });
+        fail("Expected error to be thrown");
+      } catch (error: any) {
+        expect(error.message).toContain("ZodError");
+        expect(error.message).toContain("invalid_union");
+      }
+    });
+
+    it("should handle response transform with wrapper", async () => {
+      client.setResponseWrapper(createApiResponseWrapper);
+      client.useResponseTransform((data) => ({ ...data, transformed: true }));
+
+      (fetch as jest.Mock).mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          success: true,
+          data: { id: "1", name: "John" },
+          timestamp: "2024-01-15T10:30:00Z",
+          requestId: "req-123",
+        }),
+      });
+
+      const result = await client.modules.user.getUser({ id: "1" });
+
+      expect(result).toEqual({ id: "1", name: "John", transformed: true });
+    });
+  });
+
+  describe("Integration: Mock Data + Response Wrapper", () => {
+    it("should handle both features together", async () => {
+      const wrapper = (successResponse: z.ZodTypeAny) =>
+        z.union([
+          z.object({
+            success: z.literal(true),
+            data: successResponse,
+            timestamp: z.string(),
+            requestId: z.string(),
+          }),
+          z.object({
+            success: z.literal(false),
+            message: z.string(),
+            code: z.number(),
+            timestamp: z.string(),
+            requestId: z.string(),
+          }),
+        ]);
+
+      client.setResponseWrapper(wrapper);
+      client.setMockMode(true, { min: 0, max: 0 });
+
+      const result = await client.modules.user.getUser({ id: "1" });
+
+      expect(result).toEqual({ id: "mock-1", name: "Mock User" });
+    });
   });
 });
