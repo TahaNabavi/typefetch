@@ -45,3 +45,5 @@ export type EndpointMethods<M extends Record<string, EndpointDefZ>> = {
     input: z.infer<M[K]["request"]>
   ) => Promise<z.infer<M[K]["response"]>>;
 };
+
+export type TokenProvider = () => string | Promise<string>;

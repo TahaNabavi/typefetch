@@ -34,6 +34,17 @@ const contracts: Contracts = {
       // No mock data for this endpoint
     },
   },
+  admin: {
+    // Add this missing module
+    getAdminData: {
+      method: "GET",
+      path: "/admin/data",
+      auth: true,
+      request: z.object({}),
+      response: z.object({ secret: z.string() }),
+      mockData: { secret: "admin-secret" },
+    },
+  },
 };
 
 describe("ApiClient", () => {
@@ -296,8 +307,8 @@ describe("ApiClient", () => {
         await client.modules.user.getUser({ id: "1" });
         fail("Expected error to be thrown");
       } catch (error: any) {
-        expect(error.message).toContain("ZodError");
-        expect(error.message).toContain("invalid_union");
+        expect(error.message).toContain("Validation error");
+        expect(error.message).toMatch(/validation|invalid/i);
       }
     });
 
@@ -346,6 +357,395 @@ describe("ApiClient", () => {
       const result = await client.modules.user.getUser({ id: "1" });
 
       expect(result).toEqual({ id: "mock-1", name: "Mock User" });
+    });
+  });
+
+  describe("Token Provider Feature", () => {
+    it("should use tokenProvider when provided in constructor", async () => {
+      const tokenProvider = jest.fn().mockReturnValue("dynamic-token");
+      const clientWithProvider = new ApiClient(
+        {
+          baseUrl: "https://api.test.com",
+          tokenProvider,
+        },
+        contracts
+      );
+      clientWithProvider.init();
+
+      (fetch as jest.Mock).mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ id: "1", name: "John" }),
+      });
+
+      await clientWithProvider.modules.user.createUser({ name: "Alice" });
+
+      expect(tokenProvider).toHaveBeenCalled();
+      expect(fetch).toHaveBeenCalledWith("https://api.test.com/user", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: "Bearer dynamic-token",
+        },
+        body: JSON.stringify({ name: "Alice" }),
+      });
+    });
+
+    it("should use tokenProvider over static token when both provided", async () => {
+      const tokenProvider = jest.fn().mockReturnValue("dynamic-token");
+      const clientWithBoth = new ApiClient(
+        {
+          baseUrl: "https://api.test.com",
+          token: "static-token",
+          tokenProvider,
+        },
+        contracts
+      );
+      clientWithBoth.init();
+
+      (fetch as jest.Mock).mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ id: "1", name: "John" }),
+      });
+
+      await clientWithBoth.modules.user.createUser({ name: "Alice" });
+
+      expect(tokenProvider).toHaveBeenCalled();
+      expect(fetch).toHaveBeenCalledWith("https://api.test.com/user", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: "Bearer dynamic-token",
+        },
+        body: JSON.stringify({ name: "Alice" }),
+      });
+    });
+
+    it("should work with async tokenProvider", async () => {
+      const tokenProvider = jest.fn().mockResolvedValue("async-token");
+      const clientWithAsyncProvider = new ApiClient(
+        {
+          baseUrl: "https://api.test.com",
+          tokenProvider,
+        },
+        contracts
+      );
+      clientWithAsyncProvider.init();
+
+      (fetch as jest.Mock).mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ id: "1", name: "John" }),
+      });
+
+      await clientWithAsyncProvider.modules.user.createUser({ name: "Alice" });
+
+      expect(tokenProvider).toHaveBeenCalled();
+      expect(fetch).toHaveBeenCalledWith("https://api.test.com/user", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: "Bearer async-token",
+        },
+        body: JSON.stringify({ name: "Alice" }),
+      });
+    });
+
+    it("should set tokenProvider dynamically after initialization", async () => {
+      const tokenProvider = jest.fn().mockReturnValue("dynamic-token");
+
+      // Client without initial token provider
+      const clientWithoutProvider = new ApiClient(
+        {
+          baseUrl: "https://api.test.com",
+        },
+        contracts
+      );
+      clientWithoutProvider.init();
+
+      // Set token provider after initialization
+      clientWithoutProvider.setTokenProvider(tokenProvider);
+
+      (fetch as jest.Mock).mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ id: "1", name: "John" }),
+      });
+
+      await clientWithoutProvider.modules.user.createUser({ name: "Alice" });
+
+      expect(tokenProvider).toHaveBeenCalled();
+      expect(fetch).toHaveBeenCalledWith("https://api.test.com/user", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: "Bearer dynamic-token",
+        },
+        body: JSON.stringify({ name: "Alice" }),
+      });
+    });
+
+    it("should get current token from tokenProvider", async () => {
+      const tokenProvider = jest.fn().mockReturnValue("current-token");
+      const clientWithProvider = new ApiClient(
+        {
+          baseUrl: "https://api.test.com",
+          tokenProvider,
+        },
+        contracts
+      );
+      clientWithProvider.init();
+
+      const token = await clientWithProvider.getCurrentToken();
+
+      expect(tokenProvider).toHaveBeenCalled();
+      expect(token).toBe("current-token");
+    });
+
+    it("should get current token from static config when no tokenProvider", async () => {
+      const clientWithStaticToken = new ApiClient(
+        {
+          baseUrl: "https://api.test.com",
+          token: "static-token",
+        },
+        contracts
+      );
+      clientWithStaticToken.init();
+
+      const token = await clientWithStaticToken.getCurrentToken();
+
+      expect(token).toBe("static-token");
+    });
+
+    it("should return undefined when no token or tokenProvider", async () => {
+      const clientWithoutToken = new ApiClient(
+        {
+          baseUrl: "https://api.test.com",
+        },
+        contracts
+      );
+      clientWithoutToken.init();
+
+      const token = await clientWithoutToken.getCurrentToken();
+
+      expect(token).toBeUndefined();
+    });
+
+    it("should handle tokenProvider returning empty string", async () => {
+      const tokenProvider = jest.fn().mockReturnValue("");
+      const clientWithEmptyProvider = new ApiClient(
+        {
+          baseUrl: "https://api.test.com",
+          tokenProvider,
+        },
+        contracts
+      );
+      clientWithEmptyProvider.init();
+
+      await expect(
+        clientWithEmptyProvider.modules.user.createUser({ name: "Alice" })
+      ).rejects.toThrow(RichError);
+
+      expect(tokenProvider).toHaveBeenCalled();
+    });
+
+    it("should handle tokenProvider returning null/undefined", async () => {
+      const tokenProvider = jest.fn().mockReturnValue(null);
+      const clientWithNullProvider = new ApiClient(
+        {
+          baseUrl: "https://api.test.com",
+          tokenProvider,
+        },
+        contracts
+      );
+      clientWithNullProvider.init();
+
+      await expect(
+        clientWithNullProvider.modules.user.createUser({ name: "Alice" })
+      ).rejects.toThrow(RichError);
+
+      expect(tokenProvider).toHaveBeenCalled();
+    });
+
+    it("should work with tokenProvider for non-auth endpoints", async () => {
+      const tokenProvider = jest.fn().mockReturnValue("some-token");
+      const clientWithProvider = new ApiClient(
+        {
+          baseUrl: "https://api.test.com",
+          tokenProvider,
+        },
+        contracts
+      );
+      clientWithProvider.init();
+
+      (fetch as jest.Mock).mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ id: "1", name: "John" }),
+      });
+
+      const result = await clientWithProvider.modules.user.getUser({ id: "1" });
+
+      expect(result).toEqual({ id: "1", name: "John" });
+      expect(fetch).toHaveBeenCalledWith("https://api.test.com/user", {
+        method: "GET",
+        headers: { "Content-Type": "application/json" },
+        body: undefined,
+      });
+
+      const fetchCall = (fetch as jest.Mock).mock.calls[0][1] as RequestInit;
+      expect(fetchCall.headers).not.toHaveProperty("Authorization");
+    });
+
+    it("should call tokenProvider for each auth request", async () => {
+      const tokenProvider = jest.fn().mockReturnValue("dynamic-token");
+      const clientWithProvider = new ApiClient(
+        {
+          baseUrl: "https://api.test.com",
+          tokenProvider,
+        },
+        contracts
+      );
+      clientWithProvider.init();
+
+      (fetch as jest.Mock)
+        .mockResolvedValueOnce({
+          ok: true,
+          json: async () => ({ id: "1", name: "User1" }),
+        })
+        .mockResolvedValueOnce({
+          ok: true,
+          json: async () => ({ id: "2", name: "User2" }),
+        });
+
+      await clientWithProvider.modules.user.createUser({ name: "User1" });
+      await clientWithProvider.modules.user.createUser({ name: "User2" });
+
+      expect(tokenProvider).toHaveBeenCalledTimes(2);
+    });
+
+    it("should work with mock data and tokenProvider", async () => {
+      const tokenProvider = jest.fn().mockReturnValue("mock-token");
+      const clientWithProvider = new ApiClient(
+        {
+          baseUrl: "https://api.test.com",
+          tokenProvider,
+          useMockData: true,
+        },
+        contracts
+      );
+      clientWithProvider.init();
+
+      const result = await clientWithProvider.modules.user.createUser({
+        name: "Test",
+      });
+
+      expect(result.id).toMatch(/^mock-/);
+      expect(result.name).toBe("Dynamic Mock User");
+      // Token provider should not be called when using mock data
+      expect(tokenProvider).not.toHaveBeenCalled();
+      expect(fetch).not.toHaveBeenCalled();
+    });
+
+    it("should handle tokenProvider errors gracefully", async () => {
+      const tokenProvider = jest.fn().mockImplementation(() => {
+        throw new Error("Token provider failed");
+      });
+      const clientWithFailingProvider = new ApiClient(
+        {
+          baseUrl: "https://api.test.com",
+          tokenProvider,
+        },
+        contracts
+      );
+      clientWithFailingProvider.init();
+
+      await expect(
+        clientWithFailingProvider.modules.user.createUser({ name: "Alice" })
+      ).rejects.toThrow("Token provider failed");
+    });
+
+    it("should work with response wrapper and tokenProvider", async () => {
+      const tokenProvider = jest.fn().mockReturnValue("wrapper-token");
+      const clientWithProvider = new ApiClient(
+        {
+          baseUrl: "https://api.test.com",
+          tokenProvider,
+        },
+        contracts
+      );
+      clientWithProvider.init();
+
+      clientWithProvider.setResponseWrapper((successResponse) =>
+        z.union([
+          z.object({
+            success: z.literal(true),
+            data: successResponse,
+          }),
+          z.object({
+            success: z.literal(false),
+            error: z.string(),
+          }),
+        ])
+      );
+
+      (fetch as jest.Mock).mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          success: true,
+          data: { id: "1", name: "John" },
+        }),
+      });
+
+      const result = await clientWithProvider.modules.user.createUser({
+        name: "Alice",
+      });
+
+      expect(tokenProvider).toHaveBeenCalled();
+      expect(result).toEqual({ id: "1", name: "John" });
+    });
+
+    it("should work with multiple modules and tokenProvider", async () => {
+      const tokenProvider = jest.fn().mockReturnValue("multi-token");
+      const clientWithProvider = new ApiClient(
+        {
+          baseUrl: "https://api.test.com",
+          tokenProvider,
+        },
+        contracts
+      );
+      clientWithProvider.init();
+
+      (fetch as jest.Mock)
+        .mockResolvedValueOnce({
+          ok: true,
+          json: async () => ({ id: "1", name: "User1" }),
+        })
+        .mockResolvedValueOnce({
+          ok: true,
+          json: async () => ({ secret: "admin-data" }),
+        });
+
+      await clientWithProvider.modules.user.createUser({ name: "User1" });
+      await clientWithProvider.modules.admin.getAdminData({});
+
+      expect(tokenProvider).toHaveBeenCalledTimes(2);
+      expect(fetch).toHaveBeenNthCalledWith(1, "https://api.test.com/user", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: "Bearer multi-token",
+        },
+        body: JSON.stringify({ name: "User1" }),
+      });
+      expect(fetch).toHaveBeenNthCalledWith(
+        2,
+        "https://api.test.com/admin/data",
+        {
+          method: "GET",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: "Bearer multi-token",
+          },
+          body: undefined,
+        }
+      );
     });
   });
 });

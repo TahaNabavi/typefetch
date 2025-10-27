@@ -5,6 +5,7 @@ import {
   Middleware,
   ErrorLike,
   EndpointMethods,
+  TokenProvider,
 } from "@/types";
 import { z } from "zod";
 
@@ -28,6 +29,7 @@ export class ApiClient<C extends Contracts, E extends ErrorLike = RichError> {
   private useMockData: boolean = false;
   private mockDelay: { min: number; max: number } = { min: 100, max: 1000 };
   private responseWrapper?: (successResponse: z.ZodTypeAny) => z.ZodTypeAny;
+  private tokenProvider?: TokenProvider;
 
   private _modules!: {
     [M in keyof C]: EndpointMethods<C[M]>;
@@ -37,6 +39,7 @@ export class ApiClient<C extends Contracts, E extends ErrorLike = RichError> {
     private config: {
       baseUrl: string;
       token?: string;
+      tokenProvider?: TokenProvider;
       useMockData?: boolean;
       mockDelay?: { min: number; max: number };
     },
@@ -44,6 +47,7 @@ export class ApiClient<C extends Contracts, E extends ErrorLike = RichError> {
   ) {
     this.useMockData = config.useMockData || false;
     this.mockDelay = config.mockDelay || { min: 100, max: 1000 };
+    this.tokenProvider = config.tokenProvider;
   }
 
   init() {
@@ -94,6 +98,17 @@ export class ApiClient<C extends Contracts, E extends ErrorLike = RichError> {
     this.responseWrapper = wrapper;
   }
 
+  setTokenProvider(provider: TokenProvider) {
+    this.tokenProvider = provider;
+  }
+
+  async getCurrentToken(): Promise<string | undefined> {
+    if (this.tokenProvider) {
+      return await this.tokenProvider();
+    }
+    return this.config.token;
+  }
+
   private async request<TReq extends z.ZodTypeAny, TRes extends z.ZodTypeAny>(
     endpoint: EndpointDef<TReq, TRes>,
     input: z.infer<TReq>
@@ -104,7 +119,12 @@ export class ApiClient<C extends Contracts, E extends ErrorLike = RichError> {
       return this.handleMockRequest(endpoint);
     }
 
-    if (endpoint.auth && !this.config.token) {
+    let token = this.config.token;
+    if (this.tokenProvider) {
+      token = await this.tokenProvider();
+    }
+
+    if (endpoint.auth && !token) {
       const error = this.createError({
         message: `Missing token for ${endpoint.path}`,
         status: 401,
@@ -115,8 +135,9 @@ export class ApiClient<C extends Contracts, E extends ErrorLike = RichError> {
     }
 
     const headers: HeadersInit = { "Content-Type": "application/json" };
-    if (endpoint.auth && this.config.token)
-      headers["Authorization"] = `Bearer ${this.config.token}`;
+    if (endpoint.auth && token) {
+      headers["Authorization"] = `Bearer ${token}`;
+    }
 
     const ctx = {
       url: this.config.baseUrl + endpoint.path,
@@ -200,7 +221,6 @@ export class ApiClient<C extends Contracts, E extends ErrorLike = RichError> {
       };
 
       const parsedWrappedResponse = wrappedSchema.parse(mockWrappedResponse);
-
       return this.responseTransform(
         endpoint.response.parse(parsedWrappedResponse.data)
       );
@@ -223,6 +243,14 @@ export class ApiClient<C extends Contracts, E extends ErrorLike = RichError> {
 
   private normalizeError(err: any) {
     if (err instanceof RichError) return err;
+    if (err instanceof z.ZodError) {
+      return this.createError({
+        message: `Validation error: ${err.errors
+          .map((e) => e.message)
+          .join(", ")}`,
+        code: "VALIDATION_ERROR",
+      });
+    }
     return this.createError({ message: err.message || "Unknown error" });
   }
 }

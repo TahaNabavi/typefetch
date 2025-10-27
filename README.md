@@ -27,7 +27,7 @@ yarn add @tahanabavi/typefetch
 
 ---
 
-## What's New in v1.1.0
+## What's New in v1.1.1
 
 ### 🎯 Mock Data Support
 
@@ -47,6 +47,13 @@ yarn add @tahanabavi/typefetch
 
 - Better Zod error wrapping and reporting
 - Improved type safety for response wrappers
+
+### 🔧 Token Provider System
+
+- Dynamic token resolution: Tokens resolved at request time, not initialization
+- Universal compatibility: Works seamlessly in both server and client environments
+- Async token providers: Support for asynchronous token retrieval
+  - Multiple token sources: Flexible token sourcing from cookies, context, or external services
 
 ---
 
