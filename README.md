@@ -1,247 +1,80 @@
 # TypeFetch
 
-TypeFetch is a type-safe client for working with APIs, built with TypeScript and Zod. This project allows you to define API contracts and safely use types, while also supporting middlewares, error handling, response transformation, mock data, and response wrappers.
+TypeFetch is a strongly-typed HTTP client built on TypeScript and Zod.
 
----
+You define your API once using Zod schemas, and TypeFetch generates a fully type-safe client with:
 
-## Features
-
-- Fully type-safe using TypeScript and Zod
-- Define contracts for modules and endpoints
-- Support for middlewares to add custom behavior before or after requests
-- Error handling with the `RichError` class
-- Ability to transform responses using a response transformer
-- Authentication support via token
-- Mock data support for development and testing
-- Response wrapper for consistent API response formats
-
----
+- End-to-end type safety
+- Automatic URL handling (path, query, body)
+- Middleware pipeline (logging, retry, cache, auth)
+- Mock mode for development
+- Dynamic token providers
+- Response wrappers for consistent API envelopes
+- Unified error system (RichError)
 
 ## Installation
 
-```bash
 npm install @tahanabavi/typefetch
+
 # or
+
 yarn add @tahanabavi/typefetch
+
+## Key Features
+
+1. Type-Safe API Client  
+   Define your API with Zod schemas and get full type safety for request and response types.
+
+2. Structured Request Support  
+   Each request may contain:
+
+   - path: URL parameters (fills /users/:id)
+   - query: URL query string ?page=1&limit=10
+   - body: JSON payload for POST/PUT/PATCH
+
+   The client automatically builds URLs and bodies correctly.
+
+3. Backward Compatibility  
+   If your request schema is flat (z.object({ name: z.string() })), TypeFetch automatically treats it as a simple body payload—no breaking changes.
+
+4. Middlewares  
+   Middlewares allow modifying requests and responses.
+   Built-in middlewares include:
+
+   - loggingMiddleware
+   - retryMiddleware
+   - authMiddleware
+   - cacheMiddleware
+
+5. Token Provider System  
+   Provide tokens dynamically using:
+
+   - token: static auth token
+   - tokenProvider: function or async function returning a token
+
+6. Mock Mode  
+   Provides mock responses based on endpoint.mockData, with configurable fake delays.
+
+7. Response Wrapper  
+   For APIs that wrap responses:
+
+   ```
+   {
+     "success": true,
+     "data": {...},
+     "timestamp": "...",
+     "requestId": "..."
+   }
+   ```
+
+   TypeFetch unwraps the response automatically.
+
+## Defining API Contracts
+
+Example contract definition:
+
 ```
-
----
-
-## What's New in v1.1.1
-
-### 🎯 Mock Data Support
-
-- Add mock data to endpoints for development and testing
-- Configurable random delays to simulate network latency
-- Support for both static data and dynamic functions
-- Runtime toggle between mock and real API modes
-
-### 🔄 Response Wrapper
-
-- Consistent API response format handling
-- Automatic validation of wrapped responses
-- Support for success/error response patterns
-- Seamless integration with existing contracts
-
-### 🚀 Enhanced Error Handling
-
-- Better Zod error wrapping and reporting
-- Improved type safety for response wrappers
-
-### 🔧 Token Provider System
-
-- Dynamic token resolution: Tokens resolved at request time, not initialization
-- Universal compatibility: Works seamlessly in both server and client environments
-- Async token providers: Support for asynchronous token retrieval
-  - Multiple token sources: Flexible token sourcing from cookies, context, or external services
-
----
-
-## Defining Contracts
-
-Contracts are defined using the `Contracts` and `EndpointDef` types.
-
-```ts
 import { z } from "zod";
-
-const contracts = {
-  user: {
-    getUser: {
-      method: "GET",
-      path: "/user/:id",
-      auth: true,
-      request: z.object({ id: z.string() }),
-      response: z.object({ id: z.string(), name: z.string() }),
-      // Optional mock data
-      mockData: { id: "1", name: "John Doe" },
-    },
-    createUser: {
-      method: "POST",
-      path: "/user",
-      request: z.object({ name: z.string() }),
-      response: z.object({ id: z.string(), name: z.string() }),
-      // Dynamic mock data function
-      mockData: () => ({ id: Math.random().toString(), name: "Dynamic User" }),
-    },
-  },
-} as const;
-```
-
----
-
-## Using `ApiClient`
-
-```ts
-import { ApiClient, RichError } from "typefetch";
-
-const client = new ApiClient(
-  {
-    baseUrl: "https://api.example.com",
-    token: "your-auth-token",
-    useMockData: true,
-    mockDelay: { min: 100, max: 1000 },
-  },
-  contracts
-);
-
-client.init();
-
-const { modules: api } = client;
-
-const user = await api.user.getUser({ id: "123" });
-const newUser = await api.user.createUser({ name: "Taha" });
-```
-
----
-
-## Error Handling
-
-All errors are provided via the `RichError` class. You can define a custom error handler:
-
-```ts
-client.onError((error: RichError) => {
-  console.error("API Error:", error.message, error.status, error.code);
-});
-```
-
----
-
-## Middlewares
-
-You can add custom behavior before or after requests. Middlewares work similarly to Express:
-
-```ts
-client.use(
-  async (ctx: MiddlewareContext, next: MiddlewareNext, options?: any) => {
-    console.log("Request URL:", ctx.url);
-    const response = await next();
-    console.log("Response status:", response.status);
-    return response;
-  }
-);
-```
-
-### Built-in Middlewares
-
-This project provides some built-in middlewares:
-
-```ts
-import {
-  LoggingMiddleware,
-  RetryMiddleware,
-  AuthMiddleware,
-  CacheMiddleware,
-} from "typefetch/middlewares";
-
-client.use(LoggingMiddleware);
-client.use(RetryMiddleware, { maxRetries: 3, delay: 100 });
-client.use(AuthMiddleware, { refreshToken: () => "your-auth-token" });
-client.use(CacheMiddleware, { ttl: 60 * 1000 });
-```
-
-- `LoggingMiddleware` – Logs requests and responses
-- `RetryMiddleware` – Retries failed requests
-- `AuthMiddleware` – Automatically adds Authorization headers
-- `CacheMiddleware` – Caches responses to reduce repeated requests
-
----
-
-## Response Transformation
-
-You can transform the response format before returning it:
-
-```ts
-client.useResponseTransform((data) => {
-  return { ...data, fetchedAt: new Date() };
-});
-```
-
----
-
-## Mock Data Features
-
-Static Mock Data:
-
-```ts
-mockData: { id: "1", name: "Static User" }
-```
-
-Dynamic Mock Data:
-
-```ts
-mockData: () => ({ id: Math.random().toString(), name: `User-${Date.now()}` });
-```
-
-Runtime Control:
-
-```ts
-client.setMockMode(true, { min: 100, max: 2000 });
-client.setMockMode(false);
-```
-
----
-
-## Response Wrapper Features
-
-```ts
-const apiResponseWrapper = (successResponse: z.ZodTypeAny) =>
-  z.union([
-    z.object({
-      success: z.literal(true),
-      data: successResponse,
-      timestamp: z.string(),
-      requestId: z.string(),
-    }),
-    z.object({
-      success: z.literal(false),
-      message: z.string(),
-      code: z.number(),
-      timestamp: z.string(),
-      requestId: z.string(),
-    }),
-  ]);
-
-client.setResponseWrapper(apiResponseWrapper);
-```
-
----
-
-## Important Notes
-
-- Always call `client.init()` before using endpoints.
-- Types are automatically inferred from Zod, making inputs and outputs type-safe.
-- Middleware execution order: first added middleware runs last, last added middleware runs first.
-- Mock data is used only when `useMockData` is true and mock data is defined.
-- Response wrapper automatically handles success/error patterns.
-
----
-
-## Full Example
-
-```ts
-import { z } from "zod";
-import { ApiClient, RichError } from "typefetch";
-import { LoggingMiddleware, RetryMiddleware } from "typefetch/middlewares";
 
 const contracts = {
   user: {
@@ -249,61 +82,141 @@ const contracts = {
       method: "GET",
       path: "/users/:id",
       auth: true,
-      request: z.object({ id: z.string() }),
+      request: z.object({
+        path: z.object({ id: z.string() }).optional(),
+        query: z.object({}).optional(),
+        body: z.never().optional(),
+      }),
       response: z.object({
         id: z.string(),
         name: z.string(),
-        email: z.string(),
       }),
-      mockData: { id: "1", name: "John Doe", email: "john@example.com" },
+      mockData: { id: "1", name: "John Doe" }
     },
-  },
-} as const;
 
-const apiResponseWrapper = (successResponse: z.ZodTypeAny) =>
-  z.union([
-    z.object({
-      success: z.literal(true),
-      data: successResponse,
-      timestamp: z.string(),
-      requestId: z.string(),
-    }),
-    z.object({
-      success: z.literal(false),
-      message: z.string(),
-      code: z.number(),
-      timestamp: z.string(),
-      requestId: z.string(),
-    }),
-  ]);
+    createUser: {
+      method: "POST",
+      path: "/users",
+      auth: true,
+      request: z.object({
+        path: z.object({}).optional(),
+        query: z.object({}).optional(),
+        body: z.object({ name: z.string() }).optional(),
+      }),
+      response: z.object({
+        id: z.string(),
+        name: z.string(),
+      }),
+      mockData: () => ({
+        id: Math.random().toString(36).slice(2),
+        name: "Mock User",
+      }),
+    }
+  }
+};
+```
+
+## Using ApiClient
+
+```
+import { ApiClient } from "@tahanabavi/typefetch";
 
 const client = new ApiClient(
   {
     baseUrl: "https://api.example.com",
-    token: "abc123",
-    useMockData: process.env.NODE_ENV === "development",
+    tokenProvider: () => "dynamic-token",
+    useMockData: false
   },
   contracts
 );
 
 client.init();
-client.setResponseWrapper(apiResponseWrapper);
-client.use(LoggingMiddleware);
-client.use(RetryMiddleware, { maxRetries: 2 });
 
-client.onError((err: RichError) => {
-  console.error("Error:", err.message);
-});
+const api = client.modules;
 
-const { modules: api } = client;
-
-(async () => {
-  const user = await api.user.getUser({ id: "1" });
-  console.log(user);
-})();
+const user = await api.user.getUser({ path: { id: "123" } });
+const created = await api.user.createUser({ body: { name: "Alice" } });
 ```
 
----
+## Middlewares
+
+Example custom middleware:
+
+```
+client.use(async (ctx, next) => {
+  console.log("Request to:", ctx.url);
+  const res = await next();
+  console.log("Response:", res.status);
+  return res;
+});
+```
+
+Built-in middlewares:
+
+```
+import {
+  loggingMiddleware,
+  retryMiddleware,
+  cacheMiddleware,
+  authMiddleware
+} from "@tahanabavi/typefetch/middlewares";
+
+  client.use(loggingMiddleware, { logRequest: true });
+  client.use(retryMiddleware, { maxRetries: 3, delay: 100 });
+  client.use(cacheMiddleware, { ttl: 60000 });
+  client.use(authMiddleware, {
+  refreshToken: async () => "refreshed-token"
+});
+```
+
+## Mock Mode
+```
+client.setMockMode(true, { min: 200, max: 1000 });
+client.setMockMode(false);
+```
+## Response Transformation
+```
+client.useResponseTransform((data) => {
+  return {
+    ...data,
+    transformedAt: new Date().toISOString()
+  };
+});
+```
+## Response Wrapper Example
+```
+const wrapper = (successResponse) =>
+z.union([
+  z.object({
+    success: z.literal(true),
+    data: successResponse,
+    timestamp: z.string(),
+    requestId: z.string(),
+  }),
+  z.object({
+    success: z.literal(false),
+    message: z.string(),
+    code: z.number(),
+    timestamp: z.string(),
+    requestId: z.string(),
+  }),
+]);
+
+client.setResponseWrapper(wrapper);
+```
+## Error Handling
+```
+client.onError((err) => {
+  console.error("API Error:", err.message, err.status, err.code);
+});
+```
+## Notes
+
+- Always call client.init() before using client.modules.
+- Middlewares run in reverse registration order.
+- Endpoints requiring auth must have a token or tokenProvider.
+- All responses are validated via Zod.
+- Backward-compatible request support makes migration safe.
 
 ## License
 

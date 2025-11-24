@@ -1,66 +1,90 @@
+// middlewares.test.ts
 import { authMiddleware } from "../middlewares/auth";
 import { cacheMiddleware } from "../middlewares/cache";
 import { loggingMiddleware } from "../middlewares/logging";
 import { retryMiddleware } from "../middlewares/retry";
+import { MiddlewareContext } from "@/types"; // adjust path if different
 
 describe("middlewares", () => {
-  const mockCtx = (url = "/test", method = "GET") => ({
+  const createCtx = (url: string = "/test", method: string = "GET"): MiddlewareContext => ({
     url,
-    init: { method, headers: {} as Record<string, string> },
+    init: {
+      method,
+      headers: {},
+    },
   });
 
-  const mockNext = (response: any = { ok: true, status: 200 }) =>
-    jest.fn().mockResolvedValue(new Response(JSON.stringify(response)));
+  const createNext = (payload: unknown = { ok: true, status: 200 }) =>
+    jest.fn<Promise<Response>, []>(() =>
+      Promise.resolve(
+        new Response(JSON.stringify(payload), {
+          status: (payload as any)?.status ?? 200,
+          headers: { "Content-Type": "application/json" },
+        })
+      )
+    );
 
   // ---------------- AUTH ----------------
   it("authMiddleware should add refreshed token", async () => {
-    const ctx = mockCtx();
-    const next = mockNext();
+    const ctx = createCtx();
+    const next = createNext();
 
     await authMiddleware(ctx, next, {
       refreshToken: async () => "NEW_TOKEN",
     });
 
-    expect(ctx.init.headers["Authorization"]).toBe("Bearer NEW_TOKEN");
+    expect((ctx.init.headers as Record<string, string>)["Authorization"]).toBe(
+      "Bearer NEW_TOKEN"
+    );
     expect(next).toHaveBeenCalled();
   });
 
   it("authMiddleware should skip if no refreshToken provided", async () => {
-    const ctx = mockCtx();
-    const next = mockNext();
+    const ctx = createCtx();
+    const next = createNext();
 
     await authMiddleware(ctx, next, {});
-    expect(ctx.init.headers["Authorization"]).toBeUndefined();
+
+    expect(
+      (ctx.init.headers as Record<string, string>)["Authorization"]
+    ).toBeUndefined();
     expect(next).toHaveBeenCalled();
   });
 
   // ---------------- CACHE ----------------
   it("cacheMiddleware should cache GET responses", async () => {
-    const ctx = mockCtx("/users", "GET");
-    const next = mockNext({ users: [1, 2, 3] });
+    const ctx = createCtx("/users", "GET");
+    const next = createNext({ users: [1, 2, 3], status: 200 });
     const middleware = cacheMiddleware({ ttl: 1000 });
 
     const res1 = await middleware(ctx, next);
-    const res2 = await middleware(ctx, next);
+    const data1 = await res1.json();
+    expect(data1.users).toEqual([1, 2, 3]);
 
-    expect(next).toHaveBeenCalledTimes(1); // only first time
+    const res2 = await middleware(ctx, next);
     const data2 = await res2.json();
+
+    // underlying fetch called only once
+    expect(next).toHaveBeenCalledTimes(1);
     expect(data2.users).toEqual([1, 2, 3]);
   });
 
   it("cacheMiddleware should bypass cache for non-GET requests", async () => {
-    const ctx = mockCtx("/users", "POST");
-    const next = mockNext({ ok: true });
+    const ctx = createCtx("/users", "POST");
+    const next = createNext({ ok: true, status: 200 });
     const middleware = cacheMiddleware();
 
-    await middleware(ctx, next);
+    const res = await middleware(ctx, next);
+    const json = await res.json();
+
+    expect(json.ok).toBe(true);
     expect(next).toHaveBeenCalledTimes(1);
   });
 
   // ---------------- LOGGING ----------------
   it("loggingMiddleware should log request and response", async () => {
-    const ctx = mockCtx();
-    const next = mockNext();
+    const ctx = createCtx();
+    const next = createNext({ ok: true, status: 200 });
 
     const logSpy = jest.spyOn(console, "log").mockImplementation(() => {});
 
@@ -78,13 +102,21 @@ describe("middlewares", () => {
 
   // ---------------- RETRY ----------------
   it("retryMiddleware should retry failed requests", async () => {
-    const ctx = mockCtx();
+    const ctx = createCtx();
     let attempt = 0;
 
-    const next = jest.fn().mockImplementation(() => {
+    const next = jest.fn<Promise<Response>, []>(() => {
       attempt++;
-      if (attempt < 2) throw new Error("fail");
-      return Promise.resolve(new Response(JSON.stringify({ ok: true })));
+      if (attempt < 2) {
+        return Promise.reject(new Error("fail"));
+      }
+
+      return Promise.resolve(
+        new Response(JSON.stringify({ ok: true }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        })
+      );
     });
 
     const middleware = retryMiddleware({ maxRetries: 3, delay: 10 });
@@ -93,16 +125,21 @@ describe("middlewares", () => {
     const json = await res.json();
 
     expect(json.ok).toBe(true);
+    // 1st attempt fails, 2nd succeeds
     expect(next).toHaveBeenCalledTimes(2);
   });
 
   it("retryMiddleware should throw after exceeding maxRetries", async () => {
-    const ctx = mockCtx();
-    const next = jest.fn().mockRejectedValue(new Error("fail always"));
+    const ctx = createCtx();
+
+    const next = jest.fn<Promise<Response>, []>(() =>
+      Promise.reject(new Error("fail always"))
+    );
 
     const middleware = retryMiddleware({ maxRetries: 2, delay: 10 });
 
     await expect(middleware(ctx, next)).rejects.toThrow("fail always");
-    expect(next).toHaveBeenCalledTimes(3); // initial + 2 retries
+    // initial + 2 retries = 3 total
+    expect(next).toHaveBeenCalledTimes(3);
   });
 });

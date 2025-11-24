@@ -1,20 +1,33 @@
+// types.ts
 import { z } from "zod";
 
+/**
+ * Generic request schema:
+ *
+ * request: z.object({
+ *   path: z.object({ ... }).optional(),
+ *   query: z.object({ ... }).optional(),
+ *   body: z.object({ ... }).optional(),
+ * })
+ */
+export type RequestSchema = z.ZodTypeAny;
+export type ResponseSchema = z.ZodTypeAny;
+
 export type EndpointDef<
-  TReq extends z.ZodTypeAny,
-  TRes extends z.ZodTypeAny
+  TReq extends RequestSchema,
+  TRes extends ResponseSchema
 > = {
   method: "GET" | "POST" | "PUT" | "DELETE" | "PATCH";
-  path: string;
+  path: string; // e.g. "/users/:id"
   auth?: boolean;
-  request: TReq;
+  request: TReq; // expected shape: { path?, query?, body? }
   response: TRes;
   mockData?: (() => z.infer<TRes>) | z.infer<TRes>;
 };
 
 export type Contracts = {
   [ModuleName: string]: {
-    [EndpointName: string]: EndpointDef<z.ZodTypeAny, z.ZodTypeAny>;
+    [EndpointName: string]: EndpointDef<RequestSchema, ResponseSchema>;
   };
 };
 
@@ -38,8 +51,15 @@ export type ErrorLike = {
   [key: string]: any;
 };
 
-export type EndpointDefZ = EndpointDef<z.ZodTypeAny, z.ZodTypeAny>;
+export type EndpointDefZ = EndpointDef<RequestSchema, ResponseSchema>;
 
+/**
+ * For each endpoint we expose a method:
+ *   (input: z.infer<Endpoint["request"]>) => Promise<z.infer<Endpoint["response"]>>
+ *
+ * So VSCode will show you:
+ *   { path?: { ... }, query?: { ... }, body?: { ... } }
+ */
 export type EndpointMethods<M extends Record<string, EndpointDefZ>> = {
   [K in keyof M]: (
     input: z.infer<M[K]["request"]>
