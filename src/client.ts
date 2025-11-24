@@ -313,9 +313,14 @@ export class ApiClient<C extends Contracts, E extends ErrorLike = RichError> {
       }
     }
 
-    const missingTokens = Array.from(url.matchAll(/:([A-Za-z0-9_]+)/g)).map(
-      (m) => m[1]
-    );
+    const templatePlaceholders = Array.from(
+      endpoint.path.matchAll(/:([A-Za-z0-9_]+)/g)
+    ).map((m) => m[1]);
+
+    const missingTokens = templatePlaceholders.filter((name) => {
+      const v = path ? (path as any)[name] : undefined;
+      return v === undefined || v === null;
+    });
 
     if (missingTokens.length > 0) {
       throw this.createError({
