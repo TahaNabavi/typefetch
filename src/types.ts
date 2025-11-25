@@ -23,6 +23,10 @@ export type EndpointDef<
   request: TReq; // expected shape: { path?, query?, body? }
   response: TRes;
   mockData?: (() => z.infer<TRes>) | z.infer<TRes>;
+  headers?:
+    | Record<string, string>
+    | ((input: z.infer<TReq>) => Record<string, string>);
+  bodyType?: "json" | "form-data";
 };
 
 export type Contracts = {

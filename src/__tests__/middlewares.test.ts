@@ -1,12 +1,14 @@
-// middlewares.test.ts
 import { authMiddleware } from "../middlewares/auth";
 import { cacheMiddleware } from "../middlewares/cache";
 import { loggingMiddleware } from "../middlewares/logging";
 import { retryMiddleware } from "../middlewares/retry";
-import { MiddlewareContext } from "@/types"; // adjust path if different
+import { MiddlewareContext } from "@/types"; 
 
 describe("middlewares", () => {
-  const createCtx = (url: string = "/test", method: string = "GET"): MiddlewareContext => ({
+  const createCtx = (
+    url: string = "/test",
+    method: string = "GET"
+  ): MiddlewareContext => ({
     url,
     init: {
       method,
@@ -81,6 +83,63 @@ describe("middlewares", () => {
     expect(next).toHaveBeenCalledTimes(1);
   });
 
+  it("cacheMiddleware should cache per URL (different URLs do not share cache)", async () => {
+    const middleware = cacheMiddleware({ ttl: 1000 });
+
+    const ctxA = createCtx("/users?page=1", "GET");
+    const ctxB = createCtx("/users?page=2", "GET");
+
+    const nextA = createNext({ users: ["A"], status: 200 });
+    const nextB = createNext({ users: ["B"], status: 200 });
+
+    const resA1 = await middleware(ctxA, nextA);
+    const resB1 = await middleware(ctxB, nextB);
+
+    const dataA1 = await resA1.json();
+    const dataB1 = await resB1.json();
+
+    expect(dataA1.users).toEqual(["A"]);
+    expect(dataB1.users).toEqual(["B"]);
+
+    const resA2 = await middleware(ctxA, nextA);
+    const resB2 = await middleware(ctxB, nextB);
+
+    await resA2.json();
+    await resB2.json();
+
+    // each underlying call executed only once per URL
+    expect(nextA).toHaveBeenCalledTimes(1);
+    expect(nextB).toHaveBeenCalledTimes(1);
+  });
+
+  it("cacheMiddleware should expire cache after ttl", async () => {
+    jest.useFakeTimers();
+
+    const ctx = createCtx("/items", "GET");
+    const next = createNext({ items: [1], status: 200 });
+    const middleware = cacheMiddleware({ ttl: 100 });
+
+    const res1 = await middleware(ctx, next);
+    const data1 = await res1.json();
+    expect(data1.items).toEqual([1]);
+
+    // immediate second call -> cached
+    const res2 = await middleware(ctx, next);
+    await res2.json();
+    expect(next).toHaveBeenCalledTimes(1);
+
+    // advance time beyond ttl
+    jest.advanceTimersByTime(150);
+
+    const res3 = await middleware(ctx, next);
+    const data3 = await res3.json();
+    expect(data3.items).toEqual([1]);
+    // called again after cache expiry
+    expect(next).toHaveBeenCalledTimes(2);
+
+    jest.useRealTimers();
+  });
+
   // ---------------- LOGGING ----------------
   it("loggingMiddleware should log request and response", async () => {
     const ctx = createCtx();
@@ -95,6 +154,54 @@ describe("middlewares", () => {
     });
 
     expect(logSpy).toHaveBeenCalledWith("➡️ Request:", ctx.url, ctx.init);
+    expect(logSpy).toHaveBeenCalledWith("⬅️ Response:", 200);
+
+    logSpy.mockRestore();
+  });
+
+  it("loggingMiddleware should NOT log when debug is false", async () => {
+    const ctx = createCtx();
+    const next = createNext({ ok: true, status: 200 });
+
+    const logSpy = jest.spyOn(console, "log").mockImplementation(() => {});
+
+    await loggingMiddleware(ctx, next, {
+      logRequest: true,
+      logResponse: true,
+      debug: false,
+    });
+
+    expect(logSpy).not.toHaveBeenCalled();
+
+    logSpy.mockRestore();
+  });
+
+  it("loggingMiddleware should respect logRequest / logResponse flags", async () => {
+    const ctx = createCtx();
+    const next = createNext({ ok: true, status: 200 });
+
+    const logSpy = jest.spyOn(console, "log").mockImplementation(() => {});
+
+    // only request logging
+    await loggingMiddleware(ctx, next, {
+      logRequest: true,
+      logResponse: false,
+      debug: true,
+    });
+
+    expect(logSpy).toHaveBeenCalledWith("➡️ Request:", ctx.url, ctx.init);
+    expect(logSpy).not.toHaveBeenCalledWith("⬅️ Response:", 200);
+
+    logSpy.mockClear();
+
+    // only response logging
+    await loggingMiddleware(ctx, next, {
+      logRequest: false,
+      logResponse: true,
+      debug: true,
+    });
+
+    expect(logSpy).not.toHaveBeenCalledWith("➡️ Request:", ctx.url, ctx.init);
     expect(logSpy).toHaveBeenCalledWith("⬅️ Response:", 200);
 
     logSpy.mockRestore();
@@ -141,5 +248,18 @@ describe("middlewares", () => {
     await expect(middleware(ctx, next)).rejects.toThrow("fail always");
     // initial + 2 retries = 3 total
     expect(next).toHaveBeenCalledTimes(3);
+  });
+
+  it("retryMiddleware should not retry when maxRetries is 0", async () => {
+    const ctx = createCtx();
+
+    const next = jest.fn<Promise<Response>, []>(() =>
+      Promise.reject(new Error("no retry"))
+    );
+
+    const middleware = retryMiddleware({ maxRetries: 0, delay: 10 });
+
+    await expect(middleware(ctx, next)).rejects.toThrow("no retry");
+    expect(next).toHaveBeenCalledTimes(1);
   });
 });

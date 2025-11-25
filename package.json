@@ -1,6 +1,6 @@
 {
   "name": "@tahanabavi/typefetch",
-  "version": "1.2.2",
+  "version": "1.3.0",
   "description": "A fully type-safe, extensible API client for TypeScript projects, featuring global error handling, configurable middleware, automatic retries, auth refresh, response transforms, and seamless contract integration. Designed for large-scale applications and developer-friendly API interactions.",
   "main": "./dist/index.js",
   "module": "./dist/index.mjs",
@@ -23,9 +23,29 @@
     "typescript": "^5.9.2",
     "zod": "^3.25.76"
   },
-  "author": "",
-  "license": "ISC",
+  "keywords": [
+    "http",
+    "fetch",
+    "api-client",
+    "typescript",
+    "zod",
+    "type-safe",
+    "middleware"
+  ],
   "dependencies": {
     "ts-node": "^10.9.2"
+  },
+  "author": "Taha Nabavi",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/tahanabavi/typefetch.git"
+  },
+  "bugs": {
+    "url": "https://github.com/tahanabavi/typefetch/issues"
+  },
+  "homepage": "https://github.com/tahanabavi/typefetch#readme",
+  "publishConfig": {
+    "access": "public"
   }
 }

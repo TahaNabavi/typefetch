@@ -24,15 +24,6 @@ export class RichError extends Error implements ErrorLike {
 
 /**
  * Strongly-typed HTTP client built from Zod contracts.
- *
- * Features:
- * - Type-safe request & response based on Zod schemas
- * - Path/query/body support via { path?, query?, body? } shape
- * - Backwards compatible with flat request bodies
- * - Pluggable middleware pipeline
- * - Token and tokenProvider support
- * - Mock mode with configurable delay
- * - Optional response wrapper for APIs that nest data
  */
 export class ApiClient<C extends Contracts, E extends ErrorLike = RichError> {
   private middlewares: Array<{ fn: Middleware; options?: any }> = [];
@@ -165,9 +156,10 @@ export class ApiClient<C extends Contracts, E extends ErrorLike = RichError> {
    *     path: z.object({...}).optional(),
    *     query: z.object({...}).optional(),
    *     body: z.any().optional(),
+   *     header: z.object({...}).optional(),
    *   })
    *
-   * If the parsed request does not contain `path`, `query` or `body`,
+   * If the parsed request does not contain `path`, `header`,`query` or `body`,
    * the entire input is treated as the legacy flat request body.
    */
   private async request<TReq extends z.ZodTypeAny, TRes extends z.ZodTypeAny>(
@@ -175,6 +167,19 @@ export class ApiClient<C extends Contracts, E extends ErrorLike = RichError> {
     input: z.infer<TReq>
   ): Promise<z.infer<TRes>> {
     const parsedInput = endpoint.request.parse(input);
+
+    const isObject = typeof parsedInput === "object" && parsedInput !== null;
+
+    const looksStructured =
+      isObject &&
+      ("path" in (parsedInput as any) ||
+        "query" in (parsedInput as any) ||
+        "body" in (parsedInput as any) ||
+        "headers" in (parsedInput as any));
+
+    const { headers: extraHeaders, ...restInput } = parsedInput as any as {
+      headers?: Record<string, string>;
+    };
 
     if (this.useMockData && endpoint.mockData) {
       return this.handleMockRequest(endpoint);
@@ -195,12 +200,38 @@ export class ApiClient<C extends Contracts, E extends ErrorLike = RichError> {
       throw error;
     }
 
-    const headers: HeadersInit = { "Content-Type": "application/json" };
+    const headers: HeadersInit = {};
+
     if (endpoint.auth && token) {
       headers["Authorization"] = `Bearer ${token}`;
     }
 
-    const { url, body } = this.buildUrlAndBody(endpoint, parsedInput);
+    if (endpoint.bodyType !== "form-data") {
+      headers["Content-Type"] = "application/json";
+    }
+
+    if (endpoint.headers) {
+      const endpointHeaders =
+        typeof endpoint.headers === "function"
+          ? endpoint.headers(parsedInput)
+          : endpoint.headers;
+
+      for (const [key, value] of Object.entries(endpointHeaders)) {
+        headers[key] = value;
+      }
+    }
+
+    if (extraHeaders) {
+      for (const [key, value] of Object.entries(extraHeaders)) {
+        headers[key] = value;
+      }
+    }
+
+    const { url, body } = this.buildUrlAndBody(
+      endpoint,
+      restInput as any,
+      looksStructured
+    );
 
     const ctx = {
       url,
@@ -261,37 +292,46 @@ export class ApiClient<C extends Contracts, E extends ErrorLike = RichError> {
   }
 
   /**
-   * Builds the effective URL and request body for an endpoint.
-   *
-   * - Legacy mode: if the input does not contain `path`, `query` or `body`,
-   *   the entire input is used as the JSON request body for non-GET methods.
-   *
-   * - New mode: uses `path` to interpolate `:param` segments, `query` to
-   *   construct the query string, and `body` as the JSON payload.
+   * Builds final URL and body from endpoint + request input.
+   * Supports both structured `{ path, query, body, headers }` and legacy flat input.
    */
   private buildUrlAndBody<TReq extends z.ZodTypeAny, TRes extends z.ZodTypeAny>(
     endpoint: EndpointDef<TReq, TRes>,
-    parsedInput: z.infer<TReq>
+    parsedInput: z.infer<TReq>,
+    looksStructured: boolean
   ) {
-    const isObject = typeof parsedInput === "object" && parsedInput !== null;
-
-    const hasNewShape =
-      isObject &&
-      ("path" in (parsedInput as any) ||
-        "query" in (parsedInput as any) ||
-        "body" in (parsedInput as any));
-
-    if (!hasNewShape) {
+    // LEGACY MODE: flat request object (no path/query/body/headers)
+    if (!looksStructured) {
       const url = this.config.baseUrl + endpoint.path;
-      let requestBody: string | undefined = undefined;
+      let requestBody: BodyInit | undefined = undefined;
 
       if (endpoint.method !== "GET") {
-        requestBody = JSON.stringify(parsedInput);
+        if (endpoint.bodyType === "form-data") {
+          const form = new FormData();
+          const flat = (parsedInput || {}) as Record<string, any>;
+
+          for (const [key, value] of Object.entries(flat)) {
+            if (value === undefined || value === null) continue;
+            if (Array.isArray(value)) {
+              for (const v of value) {
+                if (v === undefined || v === null) continue;
+                form.append(key, v as any);
+              }
+            } else {
+              form.append(key, value as any);
+            }
+          }
+
+          requestBody = form;
+        } else {
+          requestBody = JSON.stringify(parsedInput);
+        }
       }
 
       return { url, body: requestBody };
     }
 
+    // STRUCTURED MODE: { path?, query?, body? } (headers handled earlier)
     const { path, query, body } = parsedInput as any as {
       path?: Record<string, any>;
       query?: Record<string, any>;
@@ -355,11 +395,30 @@ export class ApiClient<C extends Contracts, E extends ErrorLike = RichError> {
       }
     }
 
-    let requestBody: string | undefined = undefined;
+    let requestBody: BodyInit | undefined = undefined;
 
     if (endpoint.method !== "GET") {
-      if (typeof body !== "undefined" && body !== null) {
-        requestBody = JSON.stringify(body);
+      if (body !== undefined && body !== null) {
+        if (endpoint.bodyType === "form-data") {
+          const form = new FormData();
+
+          for (const [key, value] of Object.entries(body)) {
+            if (value === undefined || value === null) continue;
+
+            if (Array.isArray(value)) {
+              for (const v of value) {
+                if (v === undefined || v === null) continue;
+                form.append(key, v as any);
+              }
+            } else {
+              form.append(key, value as any);
+            }
+          }
+
+          requestBody = form;
+        } else {
+          requestBody = JSON.stringify(body);
+        }
       }
     }
 
