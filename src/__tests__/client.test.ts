@@ -78,14 +78,14 @@ describe("ApiClient", () => {
 
   it("should throw validation error if input is invalid", async () => {
     await expect(client.modules.user.getUser({} as any)).rejects.toBeInstanceOf(
-      ZodError
+      ZodError,
     );
   });
 
   it("should handle auth header when token is provided", async () => {
     const authedClient = new ApiClient(
       { baseUrl: "https://api.test.com", token: "mytoken" },
-      contracts
+      contracts,
     );
     authedClient.init();
 
@@ -108,7 +108,7 @@ describe("ApiClient", () => {
 
   it("should throw error if auth required and no token provided", async () => {
     await expect(
-      client.modules.user.createUser({ name: "Alice" })
+      client.modules.user.createUser({ name: "Alice" }),
     ).rejects.toThrow(RichError);
   });
 
@@ -280,7 +280,7 @@ describe("ApiClient", () => {
       });
 
       await expect(client.modules.user.getUser({ id: "999" })).rejects.toThrow(
-        RichError
+        RichError,
       );
     });
 
@@ -368,7 +368,7 @@ describe("ApiClient", () => {
           baseUrl: "https://api.test.com",
           tokenProvider,
         },
-        contracts
+        contracts,
       );
       clientWithProvider.init();
 
@@ -398,7 +398,7 @@ describe("ApiClient", () => {
           token: "static-token",
           tokenProvider,
         },
-        contracts
+        contracts,
       );
       clientWithBoth.init();
 
@@ -427,7 +427,7 @@ describe("ApiClient", () => {
           baseUrl: "https://api.test.com",
           tokenProvider,
         },
-        contracts
+        contracts,
       );
       clientWithAsyncProvider.init();
 
@@ -457,7 +457,7 @@ describe("ApiClient", () => {
         {
           baseUrl: "https://api.test.com",
         },
-        contracts
+        contracts,
       );
       clientWithoutProvider.init();
 
@@ -489,7 +489,7 @@ describe("ApiClient", () => {
           baseUrl: "https://api.test.com",
           tokenProvider,
         },
-        contracts
+        contracts,
       );
       clientWithProvider.init();
 
@@ -505,7 +505,7 @@ describe("ApiClient", () => {
           baseUrl: "https://api.test.com",
           token: "static-token",
         },
-        contracts
+        contracts,
       );
       clientWithStaticToken.init();
 
@@ -519,7 +519,7 @@ describe("ApiClient", () => {
         {
           baseUrl: "https://api.test.com",
         },
-        contracts
+        contracts,
       );
       clientWithoutToken.init();
 
@@ -535,12 +535,12 @@ describe("ApiClient", () => {
           baseUrl: "https://api.test.com",
           tokenProvider,
         },
-        contracts
+        contracts,
       );
       clientWithEmptyProvider.init();
 
       await expect(
-        clientWithEmptyProvider.modules.user.createUser({ name: "Alice" })
+        clientWithEmptyProvider.modules.user.createUser({ name: "Alice" }),
       ).rejects.toThrow(RichError);
 
       expect(tokenProvider).toHaveBeenCalled();
@@ -553,12 +553,12 @@ describe("ApiClient", () => {
           baseUrl: "https://api.test.com",
           tokenProvider,
         },
-        contracts
+        contracts,
       );
       clientWithNullProvider.init();
 
       await expect(
-        clientWithNullProvider.modules.user.createUser({ name: "Alice" })
+        clientWithNullProvider.modules.user.createUser({ name: "Alice" }),
       ).rejects.toThrow(RichError);
 
       expect(tokenProvider).toHaveBeenCalled();
@@ -571,7 +571,7 @@ describe("ApiClient", () => {
           baseUrl: "https://api.test.com",
           tokenProvider,
         },
-        contracts
+        contracts,
       );
       clientWithProvider.init();
 
@@ -600,7 +600,7 @@ describe("ApiClient", () => {
           baseUrl: "https://api.test.com",
           tokenProvider,
         },
-        contracts
+        contracts,
       );
       clientWithProvider.init();
 
@@ -628,7 +628,7 @@ describe("ApiClient", () => {
           tokenProvider,
           useMockData: true,
         },
-        contracts
+        contracts,
       );
       clientWithProvider.init();
 
@@ -652,12 +652,12 @@ describe("ApiClient", () => {
           baseUrl: "https://api.test.com",
           tokenProvider,
         },
-        contracts
+        contracts,
       );
       clientWithFailingProvider.init();
 
       await expect(
-        clientWithFailingProvider.modules.user.createUser({ name: "Alice" })
+        clientWithFailingProvider.modules.user.createUser({ name: "Alice" }),
       ).rejects.toThrow("Token provider failed");
     });
 
@@ -668,7 +668,7 @@ describe("ApiClient", () => {
           baseUrl: "https://api.test.com",
           tokenProvider,
         },
-        contracts
+        contracts,
       );
       clientWithProvider.init();
 
@@ -682,7 +682,7 @@ describe("ApiClient", () => {
             success: z.literal(false),
             error: z.string(),
           }),
-        ])
+        ]),
       );
 
       (fetch as jest.Mock).mockResolvedValueOnce({
@@ -708,7 +708,7 @@ describe("ApiClient", () => {
           baseUrl: "https://api.test.com",
           tokenProvider,
         },
-        contracts
+        contracts,
       );
       clientWithProvider.init();
 
@@ -744,8 +744,130 @@ describe("ApiClient", () => {
             Authorization: "Bearer multi-token",
           },
           body: undefined,
-        }
+        },
       );
+    });
+  });
+
+  describe("Response Wrapper Feature", () => {
+    const createApiResponseWrapper = (successResponse: z.ZodTypeAny) =>
+      z.union([
+        z.object({
+          success: z.literal(true),
+          data: successResponse,
+          timestamp: z.string(),
+          requestId: z.string(),
+        }),
+        z.object({
+          success: z.literal(false),
+          message: z.string(),
+          code: z.number(),
+          timestamp: z.string(),
+          requestId: z.string(),
+        }),
+      ]);
+
+    it("should validate and unwrap successful wrapped responses", async () => {
+      client.setResponseWrapper(createApiResponseWrapper);
+
+      (fetch as jest.Mock).mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          success: true,
+          data: { id: "1", name: "John" },
+          timestamp: "2024-01-15T10:30:00Z",
+          requestId: "req-123",
+        }),
+      });
+
+      const result = await client.modules.user.getUser({ id: "1" });
+
+      expect(result).toEqual({ id: "1", name: "John" });
+    });
+
+    it("should throw error for failed wrapped responses", async () => {
+      client.setResponseWrapper(createApiResponseWrapper);
+
+      (fetch as jest.Mock).mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          success: false,
+          message: "User not found",
+          code: 404,
+          timestamp: "2024-01-15T10:30:00Z",
+          requestId: "req-123",
+        }),
+      });
+
+      await expect(client.modules.user.getUser({ id: "999" })).rejects.toThrow(
+        RichError,
+      );
+    });
+
+    it("should throw validation error for invalid wrapped response format", async () => {
+      client.setResponseWrapper(createApiResponseWrapper);
+
+      (fetch as jest.Mock).mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          invalid: "format",
+        }),
+      });
+
+      try {
+        await client.modules.user.getUser({ id: "1" });
+        fail("Expected error to be thrown");
+      } catch (error: any) {
+        expect(error.message).toContain("Validation error");
+        expect(error.message).toMatch(/validation|invalid/i);
+      }
+    });
+
+    it("should handle response transform with wrapper", async () => {
+      client.setResponseWrapper(createApiResponseWrapper);
+      client.useResponseTransform((data) => ({ ...data, transformed: true }));
+
+      (fetch as jest.Mock).mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          success: true,
+          data: { id: "1", name: "John" },
+          timestamp: "2024-01-15T10:30:00Z",
+          requestId: "req-123",
+        }),
+      });
+
+      const result = await client.modules.user.getUser({ id: "1" });
+
+      expect(result).toEqual({ id: "1", name: "John", transformed: true });
+    });
+  });
+
+  describe("Integration: Mock Data + Response Wrapper", () => {
+    it("should handle both features together", async () => {
+      const wrapper = (successResponse: z.ZodTypeAny) =>
+        z.union([
+          z.object({
+            success: z.literal(true),
+            data: successResponse,
+            timestamp: z.string(),
+            requestId: z.string(),
+          }),
+          z.object({
+            success: z.literal(false),
+            message: z.string(),
+            code: z.number(),
+            timestamp: z.string(),
+            requestId: z.string(),
+          }),
+        ]);
+
+      client.setResponseWrapper(wrapper);
+      client.setMockMode(true, { min: 0, max: 0 });
+
+      const result = await client.modules.user.getUser({ id: "1" });
+
+      expect(result).toEqual({ id: "mock-1", name: "Mock User" });
     });
   });
 });

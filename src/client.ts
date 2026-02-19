@@ -7,60 +7,78 @@ import {
   ErrorLike,
   EndpointMethods,
   TokenProvider,
+  RequestOptions,
 } from "./types";
 
+/**
+ * A richer extension of the native Error class that captures
+ * additional API error details such as HTTP status, code, and field errors.
+ */
 export class RichError extends Error implements ErrorLike {
-  status?: number;
-  code?: string;
-  title?: string;
-  detail?: string;
-  errors?: Record<string, string[]>;
+  status?: number; // HTTP status code (e.g. 404, 500)
+  code?: string; // Application-level error code (e.g. "USER_NOT_FOUND")
+  title?: string; // Optional title or short summary
+  detail?: string; // Additional human-readable explanation
+  errors?: Record<string, string[]>; // Field-specific validation errors
 
   constructor(error: Partial<ErrorLike> & { message: string }) {
     super(error.message);
-    Object.assign(this, error);
+    Object.assign(this, error); // Copy all extra fields into this instance
   }
 }
 
 /**
- * Strongly-typed HTTP client built from Zod contracts.
+ * ApiClient
+ * =========
+ * A robust, strongly-typed HTTP client that automatically builds API endpoint
+ * methods from Zod-based contracts, providing:
+ * - Input and response validation via Zod
+ * - Middleware support
+ * - Token-based authentication
+ * - Error normalization (RichError)
+ * - Optional caching, retries, and mock data
  */
 export class ApiClient<C extends Contracts, E extends ErrorLike = RichError> {
-  private middlewares: Array<{ fn: Middleware; options?: any }> = [];
-  private errorHandler?: (error: E) => void;
-  private responseTransform: (data: any) => any = (d) => d;
-  private useMockData: boolean = false;
-  private mockDelay: { min: number; max: number } = { min: 100, max: 1000 };
-  private responseWrapper?: (successResponse: z.ZodTypeAny) => z.ZodTypeAny;
-  private tokenProvider?: TokenProvider;
+  private middlewares: Array<{ fn: Middleware; options?: any }> = []; // Registered middlewares
+  private errorHandler?: (error: E) => void; // Global error handler
+  private responseTransform: (data: any) => any = (d) => d; // Post-parse data transformer
+  private useMockData = false; // Whether mock responses are enabled
+  private mockDelay = { min: 100, max: 1000 }; // Mock latency range (ms)
+  private responseWrapper?: (successResponse: z.ZodTypeAny) => z.ZodTypeAny; // Wrapper for APIs with envelope structures
+  private tokenProvider?: TokenProvider; // Optional async token supplier
 
-  private _modules!: {
-    [M in keyof C]: EndpointMethods<C[M]>;
+  // Configuration for retry behavior
+  private retryConfig?: {
+    maxRetries: number;
+    backoff: "fixed" | "linear" | "exponential";
+    retryCondition?: (error: RichError, attempt: number) => boolean;
   };
+
+  // Holds generated API endpoint methods
+  private _modules!: { [M in keyof C]: EndpointMethods<C[M]> };
 
   constructor(
     private config: {
-      baseUrl: string;
-      token?: string;
-      tokenProvider?: TokenProvider;
-      useMockData?: boolean;
-      mockDelay?: { min: number; max: number };
+      baseUrl: string; // Base API URL
+      token?: string; // Static token fallback
+      tokenProvider?: TokenProvider; // Dynamic token supplier
+      useMockData?: boolean; // Enable mock mode
+      mockDelay?: { min: number; max: number }; // Simulated network delay
     },
-    private contracts: C
+    private contracts: C, // Strongly typed endpoint definitions
   ) {
+    // Apply optional configurations
     this.useMockData = config.useMockData || false;
     this.mockDelay = config.mockDelay || { min: 100, max: 1000 };
     this.tokenProvider = config.tokenProvider;
   }
 
   /**
-   * Builds the strongly-typed `modules` API from the provided contracts.
-   * Must be called once after constructing the client.
+   * Builds all API methods (`modules`) dynamically from the Zod contract definition.
+   * After `init()` is called, each endpoint can be invoked through `client.modules.moduleName.endpointName()`.
    */
   init() {
-    const modules = {} as {
-      [M in keyof C]: EndpointMethods<C[M]>;
-    };
+    const modules = {} as { [M in keyof C]: EndpointMethods<C[M]> };
 
     for (const moduleName in this.contracts) {
       const module = this.contracts[moduleName];
@@ -69,207 +87,179 @@ export class ApiClient<C extends Contracts, E extends ErrorLike = RichError> {
       for (const endpointName in module) {
         const endpoint = module[endpointName] as EndpointDefZ;
 
+        // Each endpoint call is routed to the typed `request` method.
         (modules as any)[moduleName][endpointName] = (
-          input: z.infer<(typeof endpoint)["request"]>
-        ) => this.request(endpoint as any, input as any);
+          input: any,
+          options?: RequestOptions,
+        ) => this.request(endpoint as any, input, options);
       }
     }
 
     this._modules = modules;
   }
 
-  /**
-   * Type-safe entrypoint for calling API endpoints.
-   * Populated by `init()` based on the `contracts` passed to the constructor.
-   */
+  /** Provides access to initialized modules after calling `init()`. */
   get modules() {
     return this._modules;
   }
 
-  /**
-   * Registers a middleware in the pipeline.
-   * Middlewares are executed in reverse order of registration.
-   */
+  /** Registers a new middleware in the client’s pipeline. */
   use<T>(middleware: Middleware<T>, options?: T) {
     this.middlewares.push({ fn: middleware, options });
   }
 
-  /**
-   * Registers a global error handler.
-   * The handler is invoked for normalized errors before they are re-thrown.
-   */
+  /** Sets a global error handler function to unify error behavior. */
   onError(handler: (error: E) => void) {
     this.errorHandler = handler;
   }
 
-  /**
-   * Registers a transformation function applied to all successful responses
-   * after Zod parsing.
-   */
+  /** Defines a global transform function applied to all validated responses. */
   useResponseTransform(fn: (data: any) => any) {
     this.responseTransform = fn;
   }
 
-  /**
-   * Enables or disables mock mode. When enabled, endpoints with `mockData`
-   * return mocked responses instead of performing network requests.
-   */
-  setMockMode(enabled: boolean, delay?: { min: number; max: number }) {
-    this.useMockData = enabled;
-    if (delay) {
-      this.mockDelay = delay;
-    }
+  /** Configures the retry logic (max attempts, backoff mode, etc.). */
+  setRetryConfig(config: ApiClient<C>["retryConfig"]) {
+    this.retryConfig = config;
   }
 
-  /**
-   * Registers a schema wrapper for APIs that wrap data in an envelope.
-   * Example: { success, data, message, code, ... }.
-   */
-  setResponseWrapper(wrapper: (successResponse: z.ZodTypeAny) => z.ZodTypeAny) {
-    this.responseWrapper = wrapper;
-  }
-
-  /**
-   * Sets or updates the token provider used for authenticated endpoints.
-   * Overrides any static token provided in the constructor.
-   */
+  /** Provides a custom token provider that returns tokens dynamically. */
   setTokenProvider(provider: TokenProvider) {
     this.tokenProvider = provider;
   }
 
-  /**
-   * Returns the current token, preferring the tokenProvider if present,
-   * otherwise falling back to the static token from the constructor.
-   */
+  /** Enables mock responses instead of network requests. */
+  setMockMode(enabled: boolean, delay?: { min: number; max: number }) {
+    this.useMockData = enabled;
+    if (delay) this.mockDelay = delay;
+  }
+
+  /** Registers a wrapper schema for APIs that nest response data (e.g. `{ data, success, message }`). */
+  setResponseWrapper(wrapper: (successResponse: z.ZodTypeAny) => z.ZodTypeAny) {
+    this.responseWrapper = wrapper;
+  }
+
+  /** Retrieves the current auth token, using a provider if available. */
   async getCurrentToken(): Promise<string | undefined> {
-    if (this.tokenProvider) {
-      return await this.tokenProvider();
-    }
+    if (this.tokenProvider) return await this.tokenProvider();
     return this.config.token;
   }
 
   /**
-   * Executes a single endpoint request.
-   *
-   * Expected request shape (new style):
-   *   z.object({
-   *     path: z.object({...}).optional(),
-   *     query: z.object({...}).optional(),
-   *     body: z.any().optional(),
-   *     header: z.object({...}).optional(),
-   *   })
-   *
-   * If the parsed request does not contain `path`, `header`,`query` or `body`,
-   * the entire input is treated as the legacy flat request body.
+   * Core request entry point used by auto-generated endpoint methods.
+   * Handles caching, deduplication, and mock mode routing.
    */
   private async request<TReq extends z.ZodTypeAny, TRes extends z.ZodTypeAny>(
     endpoint: EndpointDef<TReq, TRes>,
-    input: z.infer<TReq>
+    input: z.infer<TReq>,
+    options?: RequestOptions,
   ): Promise<z.infer<TRes>> {
-    const parsedInput = endpoint.request.parse(input);
-
-    const isObject = typeof parsedInput === "object" && parsedInput !== null;
-
-    const looksStructured =
-      isObject &&
-      ("path" in (parsedInput as any) ||
-        "query" in (parsedInput as any) ||
-        "body" in (parsedInput as any) ||
-        "headers" in (parsedInput as any));
-
-    const { headers: extraHeaders, ...restInput } = parsedInput as any as {
-      headers?: Record<string, string>;
-    };
+    const parsedInput = endpoint.request.parse(input); // Validate request against schema
 
     if (this.useMockData && endpoint.mockData) {
-      return this.handleMockRequest(endpoint);
+      return this.handleMockRequest(endpoint); // Serve mock data
     }
 
-    let token = this.config.token;
-    if (this.tokenProvider) {
-      token = await this.tokenProvider();
-    }
+    const { url, body } = this.buildUrlAndBody(endpoint, parsedInput);
 
+    const requestKey = JSON.stringify({ method: endpoint.method, url, body });
+
+    const promise = this.performRequestLogic(
+      endpoint,
+      parsedInput,
+      url,
+      body,
+      requestKey,
+      options,
+    );
+
+    return promise;
+  }
+
+  /**
+   * Full HTTP request workflow:
+   * - Token injection
+   * - Timeout support
+   * - Middleware pipeline
+   * - Fetch + response handling
+   * - Zod parsing + transformation
+   * - Caching
+   */
+  private async performRequestLogic<
+    TReq extends z.ZodTypeAny,
+    TRes extends z.ZodTypeAny,
+  >(
+    endpoint: EndpointDef<TReq, TRes>,
+    parsedInput: z.infer<TReq>,
+    url: string,
+    body: BodyInit | undefined,
+    key: string,
+    options?: RequestOptions,
+  ): Promise<z.infer<TRes>> {
+    const headers: HeadersInit = {};
+    const token = await this.getCurrentToken();
+
+    // Handle auth requirements
     if (endpoint.auth && !token) {
       const error = this.createError({
         message: `Missing token for ${endpoint.path}`,
         status: 401,
         code: "NO_TOKEN",
       });
-      this.errorHandler?.(error as unknown as E);
+      this.errorHandler?.(error as any);
       throw error;
     }
 
-    const headers: HeadersInit = {};
-
-    if (endpoint.auth && token) {
-      headers["Authorization"] = `Bearer ${token}`;
-    }
-
-    if (endpoint.bodyType !== "form-data") {
+    if (endpoint.auth && token) headers["Authorization"] = `Bearer ${token}`;
+    if (endpoint.bodyType !== "form-data")
       headers["Content-Type"] = "application/json";
-    }
 
-    if (endpoint.headers) {
-      const endpointHeaders =
-        typeof endpoint.headers === "function"
-          ? endpoint.headers(parsedInput)
-          : endpoint.headers;
-
-      for (const [key, value] of Object.entries(endpointHeaders)) {
-        headers[key] = value;
-      }
-    }
-
-    if (extraHeaders) {
-      for (const [key, value] of Object.entries(extraHeaders)) {
-        headers[key] = value;
-      }
-    }
-
-    const { url, body } = this.buildUrlAndBody(
-      endpoint,
-      restInput as any,
-      looksStructured
-    );
-
+    // Initialize fetch context
     const ctx = {
       url,
-      init: {
-        method: endpoint.method,
-        headers,
-        body,
-      },
+      init: { method: endpoint.method, headers, body } as RequestInit,
     };
 
+    // Timeout handling with abort support
+    let controller: AbortController | undefined;
+    let timeoutId: any;
+    if (options?.timeout) {
+      controller = new AbortController();
+      timeoutId = setTimeout(() => controller!.abort(), options.timeout);
+    }
+    if (options?.signal || controller)
+      ctx.init.signal = options?.signal || controller?.signal;
+
+    // Build the middleware chain (last = fetch)
     const runner = this.middlewares.reduceRight(
       (next, mw) => () => mw.fn(ctx, next, mw.options),
-      () => fetch(ctx.url, ctx.init)
+      () => fetch(ctx.url, ctx.init),
     );
 
-    try {
+    // Retry-enabled execution function
+    const execute = async () => {
       const res = await runner();
       const json = await res.json();
-
       let responseData = json;
 
+      // Handle wrapped APIs (e.g. `{ success, data, ... }`)
       if (this.responseWrapper) {
         const wrappedSchema = this.responseWrapper(endpoint.response);
-        const parsedResponse = wrappedSchema.parse(json);
+        const parsedWrapped = wrappedSchema.parse(json);
 
-        if (parsedResponse.success === false) {
+        if (parsedWrapped.success === false) {
           const error = this.createError({
-            message: parsedResponse.message || "Request failed",
-            status: parsedResponse.code || res.status,
-            code: `API_ERROR_${parsedResponse.code}`,
+            message: parsedWrapped.message || "Request failed",
+            status: parsedWrapped.code || res.status,
+            code: `API_ERROR_${parsedWrapped.code}`,
           });
-          this.errorHandler?.(error as unknown as E);
+          this.errorHandler?.(error as any);
           throw error;
         }
-
-        responseData = parsedResponse.data;
+        responseData = parsedWrapped.data;
       }
 
+      // Handle HTTP errors
       if (!res.ok) {
         const error = this.createError({
           message: json.message || res.statusText,
@@ -279,221 +269,138 @@ export class ApiClient<C extends Contracts, E extends ErrorLike = RichError> {
           detail: json.detail,
           errors: json.errors,
         });
-        this.errorHandler?.(error as unknown as E);
+        this.errorHandler?.(error as any);
         throw error;
       }
 
-      return this.responseTransform(endpoint.response.parse(responseData));
+      // Validate and transform response
+      const parsed = endpoint.response.parse(responseData);
+      const result = this.responseTransform(parsed);
+
+      return result;
+    };
+
+    // Execute with retry and normalized error handling
+    try {
+      const result = await this.executeWithRetry(execute);
+      if (timeoutId) clearTimeout(timeoutId);
+      return result;
     } catch (err: any) {
+      if (timeoutId) clearTimeout(timeoutId);
       const error = this.normalizeError(err);
-      this.errorHandler?.(error as unknown as E);
+      this.errorHandler?.(error as any);
       throw error;
     }
   }
 
-  /**
-   * Builds final URL and body from endpoint + request input.
-   * Supports both structured `{ path, query, body, headers }` and legacy flat input.
-   */
-  private buildUrlAndBody<TReq extends z.ZodTypeAny, TRes extends z.ZodTypeAny>(
-    endpoint: EndpointDef<TReq, TRes>,
-    parsedInput: z.infer<TReq>,
-    looksStructured: boolean
+  // =========================================================
+  // 🔁 RETRY ENGINE
+  // =========================================================
+
+  /** Executes a function with retry logic and configurable backoff strategy. */
+  private async executeWithRetry(fn: () => Promise<any>): Promise<any> {
+    if (!this.retryConfig) return fn();
+
+    const { maxRetries, backoff, retryCondition } = this.retryConfig;
+    let attempt = 0;
+
+    while (true) {
+      try {
+        return await fn();
+      } catch (err: any) {
+        attempt++;
+        const error = this.normalizeError(err);
+
+        const shouldRetry =
+          attempt <= maxRetries &&
+          (retryCondition?.(error, attempt) ??
+            (error.status !== undefined && error.status >= 500));
+
+        if (!shouldRetry) throw error;
+
+        const delay = this.getBackoffDelay(backoff, attempt);
+        await new Promise((r) => setTimeout(r, delay));
+      }
+    }
+  }
+
+  /** Calculates retry delay intervals for various backoff strategies. */
+  private getBackoffDelay(
+    type: "fixed" | "linear" | "exponential",
+    attempt: number,
   ) {
-    // LEGACY MODE: flat request object (no path/query/body/headers)
-    if (!looksStructured) {
-      const url = this.config.baseUrl + endpoint.path;
-      let requestBody: BodyInit | undefined = undefined;
-
-      if (endpoint.method !== "GET") {
-        if (endpoint.bodyType === "form-data") {
-          const form = new FormData();
-          const flat = (parsedInput || {}) as Record<string, any>;
-
-          for (const [key, value] of Object.entries(flat)) {
-            if (value === undefined || value === null) continue;
-            if (Array.isArray(value)) {
-              for (const v of value) {
-                if (v === undefined || v === null) continue;
-                form.append(key, v as any);
-              }
-            } else {
-              form.append(key, value as any);
-            }
-          }
-
-          requestBody = form;
-        } else {
-          requestBody = JSON.stringify(parsedInput);
-        }
-      }
-
-      return { url, body: requestBody };
+    const base = 300;
+    switch (type) {
+      case "fixed":
+        return base;
+      case "linear":
+        return base * attempt;
+      case "exponential":
+        return base * Math.pow(2, attempt - 1);
     }
+  }
 
-    // STRUCTURED MODE: { path?, query?, body? } (headers handled earlier)
-    const { path, query, body } = parsedInput as any as {
-      path?: Record<string, any>;
-      query?: Record<string, any>;
-      body?: any;
-    };
+  // =========================================================
+  // 🔧 UTILITIES
+  // =========================================================
 
+  /** Builds the final URL and request body from the endpoint definition and input payload. */
+  private buildUrlAndBody(endpoint: any, input: any) {
     let url = this.config.baseUrl + endpoint.path;
-
-    if (path) {
-      for (const [key, value] of Object.entries(path)) {
-        if (value === undefined || value === null) continue;
-
-        const token = `:${key}`;
-        if (!url.includes(token)) {
-          continue;
-        }
-
-        url = url.replace(token, encodeURIComponent(String(value)));
-      }
-    }
-
-    const templatePlaceholders = Array.from(
-      endpoint.path.matchAll(/:([A-Za-z0-9_]+)/g)
-    ).map((m) => m[1]);
-
-    const missingTokens = templatePlaceholders.filter((name) => {
-      const v = path ? (path as any)[name] : undefined;
-      return v === undefined || v === null;
-    });
-
-    if (missingTokens.length > 0) {
-      throw this.createError({
-        message: `Missing path params for placeholders: ${missingTokens.join(
-          ", "
-        )} in "${endpoint.path}"`,
-        code: "MISSING_PATH_PARAMS",
-      });
-    }
-
-    if (query) {
-      const searchParams = new URLSearchParams();
-
-      for (const [key, value] of Object.entries(query)) {
-        if (value === undefined || value === null) continue;
-
-        if (Array.isArray(value)) {
-          for (const v of value) {
-            if (v === undefined || v === null) continue;
-            searchParams.append(key, String(v));
-          }
-        } else if (typeof value === "object") {
-          searchParams.append(key, JSON.stringify(value));
-        } else {
-          searchParams.append(key, String(value));
-        }
-      }
-
-      const qs = searchParams.toString();
-      if (qs) {
-        url += (url.includes("?") ? "&" : "?") + qs;
-      }
-    }
-
-    let requestBody: BodyInit | undefined = undefined;
+    let body: BodyInit | undefined;
 
     if (endpoint.method !== "GET") {
-      if (body !== undefined && body !== null) {
-        if (endpoint.bodyType === "form-data") {
-          const form = new FormData();
-
-          for (const [key, value] of Object.entries(body)) {
-            if (value === undefined || value === null) continue;
-
-            if (Array.isArray(value)) {
-              for (const v of value) {
-                if (v === undefined || v === null) continue;
-                form.append(key, v as any);
-              }
-            } else {
-              form.append(key, value as any);
-            }
-          }
-
-          requestBody = form;
-        } else {
-          requestBody = JSON.stringify(body);
+      if (endpoint.bodyType === "form-data") {
+        const form = new FormData();
+        for (const [k, v] of Object.entries(input.body || {})) {
+          if (v != null) form.append(k, v as any);
         }
+        body = form;
+      } else {
+        body = JSON.stringify(input.body ?? input);
       }
     }
 
-    return { url, body: requestBody };
+    return { url, body };
   }
 
-  /**
-   * Returns a mocked response based on `endpoint.mockData`,
-   * respecting the configured mock delay and response wrapper.
-   */
-  private async handleMockRequest<
-    TReq extends z.ZodTypeAny,
-    TRes extends z.ZodTypeAny
-  >(endpoint: EndpointDef<TReq, TRes>): Promise<z.infer<TRes>> {
-    const delay = this.getRandomDelay();
-    await new Promise((resolve) => setTimeout(resolve, delay));
-
-    let mockData: z.infer<TRes>;
-    if (typeof endpoint.mockData === "function") {
-      mockData = (endpoint.mockData as () => z.infer<TRes>)();
-    } else {
-      mockData = endpoint.mockData as z.infer<TRes>;
-    }
-
-    if (this.responseWrapper) {
-      const wrappedSchema = this.responseWrapper(endpoint.response);
-
-      const mockWrappedResponse = {
-        success: true,
-        data: mockData,
-        timestamp: new Date().toISOString(),
-        requestId: `mock-${Math.random().toString(36).substr(2, 9)}`,
-      };
-
-      const parsedWrappedResponse = wrappedSchema.parse(mockWrappedResponse);
-      return this.responseTransform(
-        endpoint.response.parse(parsedWrappedResponse.data)
-      );
-    }
-
-    return this.responseTransform(endpoint.response.parse(mockData));
-  }
-
-  /**
-   * Returns a random delay in milliseconds within the current mock delay range.
-   */
-  private getRandomDelay(): number {
-    return (
-      Math.floor(
-        Math.random() * (this.mockDelay.max - this.mockDelay.min + 1)
-      ) + this.mockDelay.min
-    );
-  }
-
-  /**
-   * Creates a RichError instance from a partial error description.
-   */
+  /** Creates and returns a RichError from details. */
   private createError(error: Partial<RichError> & { message: string }) {
     return new RichError(error);
   }
 
   /**
-   * Normalizes unknown errors into a RichError instance.
-   * Zod validation errors are converted into a standardized validation error.
+   * Converts any thrown error to a standardized RichError instance.
+   * Also flattens Zod validation errors into readable messages.
    */
   private normalizeError(err: any) {
     if (err instanceof RichError) return err;
     if (err instanceof z.ZodError) {
       return this.createError({
-        message: `Validation error: ${err.errors
-          .map((e) => e.message)
-          .join(", ")}`,
+        message: `Validation error: ${err.errors.map((e) => e.message).join(", ")}`,
         code: "VALIDATION_ERROR",
       });
     }
     return this.createError({ message: err.message || "Unknown error" });
+  }
+
+  /**
+   * Handles mock-mode requests by simulating a delayed network call
+   * and returning validated mock data.
+   */
+  private async handleMockRequest(endpoint: any) {
+    const delay =
+      Math.floor(
+        Math.random() * (this.mockDelay.max - this.mockDelay.min + 1),
+      ) + this.mockDelay.min;
+
+    await new Promise((r) => setTimeout(r, delay)); // Simulate latency
+
+    const data =
+      typeof endpoint.mockData === "function"
+        ? endpoint.mockData()
+        : endpoint.mockData;
+
+    return this.responseTransform(endpoint.response.parse(data));
   }
 }
