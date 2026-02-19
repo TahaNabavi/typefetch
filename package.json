@@ -1,6 +1,6 @@
 {
   "name": "@tahanabavi/typefetch",
-  "version": "1.4.0",
+  "version": "1.4.1",
   "description": "A fully type-safe, extensible API client for TypeScript projects, featuring global error handling, configurable middleware, automatic retries, auth refresh, response transforms, and seamless contract integration. Designed for large-scale applications and developer-friendly API interactions.",
   "main": "./dist/index.js",
   "module": "./dist/index.mjs",
