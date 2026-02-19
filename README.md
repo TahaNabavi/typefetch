@@ -1,18 +1,24 @@
 # TypeFetch
 
-TypeFetch is a strongly-typed HTTP client built on **TypeScript** and **Zod**.
+TypeFetch is a production-grade, strongly-typed HTTP client built on
+**TypeScript** and **Zod**.
 
-You define your API once using Zod schemas, and TypeFetch generates a fully type-safe client with:
+Define your API once using Zod schemas, and TypeFetch generates a fully
+type-safe client with:
 
 - End-to-end type safety
 - Structured request support: `{ path, query, body, headers }`
 - Automatic URL handling (path parameters, query string, JSON body)
 - Middleware pipeline (logging, retry, cache, auth, custom)
+- Built-in retry engine with backoff strategies
+- Timeout & AbortController support
 - Mock mode for development
 - Dynamic token providers
 - Response wrappers for consistent API envelopes
 - Unified error system (`RichError`)
 - Optional `form-data` body support for file uploads
+- Concurrency-safe request handling
+- Production-grade validation and error normalization
 
 ---
 
@@ -26,61 +32,97 @@ yarn add @tahanabavi/typefetch
 
 ---
 
-## Core Concepts
+# What's New / Updated
 
-### 1. Type-Safe API Client
+## 1. Advanced Retry Engine
 
-Define your API with Zod schemas and get full type safety for request and response types.
+TypeFetch now includes:
 
-Each endpoint has:
+- Configurable `maxRetries`
+- Custom `retryCondition`
+- Built-in backoff strategies:
+  - `fixed`
+  - `exponential`
+- Fully normalized retry errors
 
-- `method`: HTTP verb (`GET | POST | PUT | PATCH | DELETE`)
-- `path`: path template (e.g. `/users/:id`)
-- `auth?`: whether a token is required
-- `request`: Zod schema for the request
-- `response`: Zod schema for the response
-- `mockData?`: static or dynamic mock response
-- `headers?`: static or function-based default headers
-- `bodyType?`: `"json"` (default) or `"form-data"`
-
-### 2. Structured Request Shape
-
-The recommended request shape is:
+Example:
 
 ```ts
-z.object({
-  path: z.object({ ... }).optional(),    // URL params → /users/:id
-  query: z.object({ ... }).optional(),   // query string → ?page=1
-  body: z.object({ ... }).optional(),    // JSON body
-  headers: z.record(z.string()).optional(), // per-call extra headers
-})
+client.setRetryConfig({
+  maxRetries: 3,
+  backoff: "exponential",
+  retryCondition: (err) => err.status === 500,
+});
 ```
-
-TypeFetch will:
-
-- Replace `:param` segments in the path using `path`
-- Build query string from `query`
-- Serialize `body` as JSON (or `FormData` if `bodyType: "form-data"`)
-- Merge headers from:
-  - auth (Authorization)
-  - endpoint-level `headers`
-  - per-call `headers` in the request (highest priority)
-
-### 3. Backward Compatibility
-
-If your `request` schema is **flat** (e.g. `z.object({ name: z.string() })`) and does **not** contain `path`, `query`, `body`, or `headers`, TypeFetch treats the entire object as the request body for non-GET methods.
-
-This makes migration to the structured format incremental and safe.
 
 ---
 
-## Defining API Contracts
+## 2. Backoff Strategies
 
-Example contract definition:
+Supported strategies:
+
+- **fixed** → constant delay
+- **exponential** → 100ms, 200ms, 400ms...
+
+Backoff is applied automatically between retries.
+
+---
+
+## 3. Timeout & Abort Support
+
+Per-request timeout:
+
+```ts
+await api.user.getUser({ path: { id: "123" } }, { timeout: 5000 });
+```
+
+Internally uses `AbortController` for safe cancellation.
+
+---
+
+## 4. Structured Request Model (Canonical Format)
+
+```ts
+z.object({
+  path: z.object({...}).optional(),
+  query: z.object({...}).optional(),
+  body: z.object({...}).optional(),
+  headers: z.record(z.string()).optional(),
+})
+```
+
+TypeFetch automatically:
+
+- Injects path params
+- Builds query string
+- Serializes JSON body
+- Merges headers in priority order:
+  1.  auth
+  2.  endpoint-level headers
+  3.  per-call headers
+
+---
+
+## 5. Backward Compatibility
+
+Flat request schemas still work:
+
+```ts
+z.object({
+  name: z.string(),
+});
+```
+
+For non-GET requests, the entire object becomes the JSON body.
+
+---
+
+# Defining API Contracts
+
+Example:
 
 ```ts
 import { z } from "zod";
-import { Contracts, EndpointDef } from "@tahanabavi/typefetch";
 
 const contracts = {
   user: {
@@ -89,62 +131,30 @@ const contracts = {
       path: "/users/:id",
       auth: true,
       request: z.object({
-        path: z.object({ id: z.string() }).optional(),
-        query: z.object({}).optional(),
-        body: z.never().optional(),
-        headers: z.record(z.string()).optional(),
+        path: z.object({ id: z.string() }),
       }),
       response: z.object({
         id: z.string(),
         name: z.string(),
-      }),
-      mockData: { id: "1", name: "John Doe" },
-    },
-
-    createUser: {
-      method: "POST",
-      path: "/users",
-      auth: true,
-      request: z.object({
-        path: z.object({}).optional(),
-        query: z.object({}).optional(),
-        body: z
-          .object({
-            name: z.string(),
-          })
-          .optional(),
-        headers: z.record(z.string()).optional(),
-      }),
-      response: z.object({
-        id: z.string(),
-        name: z.string(),
-      }),
-      mockData: () => ({
-        id: Math.random().toString(36).slice(2),
-        name: "Mock User",
       }),
     },
   },
 } as const;
 ```
 
-You **do not** have to use these explicit generic annotations if you don’t want to – they are shown here only for clarity. In most cases, simple `as const` + inference is enough.
-
 ---
 
-## Using `ApiClient`
+# Using ApiClient
 
 ```ts
 import { ApiClient } from "@tahanabavi/typefetch";
-import { contracts } from "./contracts";
 
 const client = new ApiClient(
   {
     baseUrl: "https://api.example.com",
-    tokenProvider: () => "dynamic-token", // or undefined for public endpoints
-    useMockData: false,
+    tokenProvider: async () => "dynamic-token",
   },
-  contracts
+  contracts,
 );
 
 client.init();
@@ -152,213 +162,142 @@ client.init();
 const api = client.modules;
 
 const user = await api.user.getUser({ path: { id: "123" } });
-const created = await api.user.createUser({ body: { name: "Alice" } });
 ```
-
-- `client.init()` builds the typed `modules` API using your contracts.
-- `api.user.getUser` and `api.user.createUser` are fully typed from the Zod schemas.
 
 ---
 
-## Middlewares
+# Middleware System
 
-Middlewares allow you to hook into the request/response lifecycle.
+Middlewares execute in reverse registration order.
 
-### Custom Middleware Example
+## Custom Middleware
 
 ```ts
 client.use(async (ctx, next) => {
-  console.log("Request to:", ctx.url);
+  console.log("Request:", ctx.url);
   const res = await next();
   console.log("Response:", res.status);
   return res;
 });
 ```
 
-### Built-in Middlewares
+## Built-in Middlewares
+
+- `loggingMiddleware`
+- `retryMiddleware`
+- `cacheMiddleware`
+- `authMiddleware`
+
+Example:
 
 ```ts
-import {
-  loggingMiddleware,
-  retryMiddleware,
-  cacheMiddleware,
-  authMiddleware,
-} from "@tahanabavi/typefetch/middlewares";
-
-client.use(loggingMiddleware, {
-  logRequest: true,
-  logResponse: true,
-  debug: true,
-});
-client.use(retryMiddleware, { maxRetries: 3, delay: 100 });
+client.use(loggingMiddleware);
+client.use(retryMiddleware, { maxRetries: 3 });
 client.use(cacheMiddleware, { ttl: 60000 });
-client.use(authMiddleware, {
-  refreshToken: async () => "refreshed-token",
-});
+client.use(authMiddleware);
 ```
-
-- **`loggingMiddleware`** – logs requests and responses (controlled by `debug`, `logRequest`, `logResponse`).
-- **`retryMiddleware`** – retries failed requests with configurable `maxRetries` and `delay`.
-- **`cacheMiddleware`** – caches GET responses in-memory per URL with `ttl` (ms).
-- **`authMiddleware`** – can refresh tokens and inject `Authorization` headers before the request.
 
 ---
 
-## Mock Mode
-
-Enable or disable mock mode globally:
+# Mock Mode
 
 ```ts
-client.setMockMode(true, { min: 200, max: 1000 }); // simulate network delay
-// ...
-client.setMockMode(false);
+client.setMockMode(true, { min: 200, max: 1000 });
 ```
 
-When mock mode is enabled and `endpoint.mockData` is defined, requests will return mock data instead of hitting the network. The response wrapper and response transform still apply.
+- Returns `mockData` instead of calling network
+- Still applies response validation and wrapper
 
 ---
 
-## Response Transformation
+# Response Wrapper
 
-You can apply a global transformation to all successful responses:
-
-```ts
-client.useResponseTransform((data) => {
-  return {
-    ...data,
-    transformedAt: new Date().toISOString(),
-  };
-});
-```
-
-This runs after:
-
-1. The HTTP call succeeds (`res.ok` is true)
-2. Optional response wrapper has been unwrapped
-3. The response has been validated with the endpoint’s Zod schema
-
----
-
-## Response Wrapper Example
-
-For APIs that wrap responses like this:
+Supports envelope APIs:
 
 ```json
 {
   "success": true,
-  "data": { ... },
-  "timestamp": "...",
-  "requestId": "..."
+  "data": {...},
+  "timestamp": "..."
 }
 ```
 
-You can define a single wrapper schema:
+Example:
 
 ```ts
-import { z } from "zod";
-
-const wrapper = (successResponse: z.ZodTypeAny) =>
-  z.union([
-    z.object({
-      success: z.literal(true),
-      data: successResponse,
-      timestamp: z.string(),
-      requestId: z.string(),
-    }),
-    z.object({
-      success: z.literal(false),
-      message: z.string(),
-      code: z.number(),
-      timestamp: z.string(),
-      requestId: z.string(),
-    }),
-  ]);
-
-client.setResponseWrapper(wrapper);
+client.setResponseWrapper(wrapperSchema);
 ```
 
-On `success: true`, `data` is passed to the endpoint’s `response` schema.  
-On `success: false`, a `RichError` is thrown with normalized information.
+On failure, throws normalized `RichError`.
 
 ---
 
-## Error Handling
+# Error Handling
+
+All errors are normalized into `RichError`:
+
+- HTTP errors
+- Network failures
+- Validation errors
+- Timeout errors
+- Retry exhaustion
+
+Global handler:
 
 ```ts
 client.onError((err) => {
-  console.error("API Error:", err.message, err.status, err.code);
+  console.error(err.message, err.status);
 });
-```
-
-Errors are normalized into `RichError` (or your custom type if you change the generic). Zod validation errors are also wrapped into a `VALIDATION_ERROR` with a readable message.
-
-You can still handle errors per-call with `try/catch`:
-
-```ts
-try {
-  const user = await api.user.getUser({ path: { id: "123" } });
-} catch (err) {
-  // err is RichError
-}
 ```
 
 ---
 
-## File Uploads (`form-data`)
+# File Uploads (FormData)
 
-For endpoints that need file upload, set `bodyType: "form-data"` and put file(s) inside `body`:
+Set `bodyType: "form-data"` in endpoint definition.
 
-```ts
-const uploadAvatarRequest = z.object({
-  path: z.object({}).optional(),
-  query: z.object({}).optional(),
-  body: z.object({
-    file: z.any(), // or z.instanceof(File) in browser
-  }),
-  headers: z.record(z.string()).optional(),
-});
-
-const uploadAvatarResponse = z.object({
-  url: z.string(),
-});
-
-const contracts = {
-  user: {
-    uploadAvatar: {
-      method: "POST",
-      path: "/users/avatar",
-      auth: true,
-      bodyType: "form-data",
-      request: uploadAvatarRequest,
-      response: uploadAvatarResponse,
-    },
-  },
-} as const;
-```
-
-Usage:
-
-```ts
-const file = input.files?.[0];
-await api.user.uploadAvatar({
-  body: { file },
-});
-```
-
-The client will build a `FormData` object and let the browser set the `Content-Type` header.
+TypeFetch builds `FormData` automatically.
 
 ---
 
-## Notes
+# Concurrency Safety
 
-- Always call `client.init()` before using `client.modules`.
-- Middlewares execute in **reverse registration order** (last registered runs first).
-- Endpoints with `auth: true` require a valid token from `token` or `tokenProvider`.
-- All responses are parsed and validated by Zod using each endpoint’s `response` schema.
-- Structured `{ path, query, body, headers }` shape is the canonical model; flat request schemas are still supported for backwards compatibility.
+TypeFetch safely handles parallel requests:
+
+- No shared mutable state issues
+- Independent retry cycles
+- Independent AbortControllers
 
 ---
 
-## License
+# Production-Grade Test Coverage
+
+The project now includes:
+
+- Validation tests
+- Middleware tests
+- Retry tests
+- Backoff timing tests
+- Timeout & abort tests
+- Concurrency tests
+- Error propagation tests
+- Mock mode tests
+- TokenProvider tests
+- Edge case handling tests
+
+Suitable for publishing as a production SDK.
+
+---
+
+# Notes
+
+- Always call `client.init()` before using modules.
+- All responses are validated via Zod.
+- Structured request shape is recommended.
+- Retry + Timeout can be combined safely.
+
+---
+
+# License
 
 MIT
