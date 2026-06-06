@@ -1,6 +1,6 @@
 {
   "name": "@tahanabavi/typefetch",
-  "version": "1.5.3",
+  "version": "1.5.5",
   "description": "A strongly typed TypeScript HTTP client powered by Zod contracts, middleware, retries, auth, mock data, response wrappers, and validation.",
   "main": "./dist/index.js",
   "module": "./dist/index.mjs",
