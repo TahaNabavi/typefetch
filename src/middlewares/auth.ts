@@ -1,4 +1,5 @@
 import { Middleware } from "@/types";
+import z from "zod";
 
 /**
  * TokenManagementOptions
@@ -48,11 +49,11 @@ export type AuthOptions = {
  *   authMiddleware({ refreshToken: tokenSupplier })
  * );
  */
-export const authMiddleware: Middleware<AuthOptions> = async (
-  ctx,
-  next,
-  options,
-) => {
+export const authMiddleware: Middleware<
+  z.ZodTypeAny,
+  z.ZodTypeAny,
+  AuthOptions
+> = async (ctx, next, options) => {
   // Step 1 & 2: Check for and execute the token provider
   if (options?.refreshToken) {
     try {

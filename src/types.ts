@@ -1,6 +1,47 @@
 // Import "zod" for schema-based runtime validation of request and response data
 import { z } from "zod";
 
+export type EncryptionMethod = "AES" | "DES" | "RSA" | "Base64" | "Custom";
+export type Method = "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
+
+/**
+ * DeepEncryptionMap<T>
+ * --------------------
+ * Recursively describes which fields should be encrypted/decrypted.
+ * Supports:
+ *   - Primitive fields → boolean | method
+ *   - Objects → recursively typed maps
+ *   - Arrays → mapping applies to element type (U)
+ *   - Array-map override (optional but supported)
+ */
+export type DeepEncryptionMap =
+  | boolean
+  | EncryptionMethod
+  | {
+      [key: string]: DeepEncryptionMap;
+    }
+  | DeepEncryptionMap[];
+
+/**
+ * EncryptionConfig
+ * ================
+ * Defines the encryption/decryption strategy for an endpoint.
+ * Both request and response maps are strictly typed based on their respective Zod schemas.
+ */
+
+export type EncryptionConfig<TReq, TRes> = {
+  method:
+    | EncryptionMethod
+    | {
+        request?: EncryptionMethod;
+        response?: EncryptionMethod;
+      };
+  /** Map of request fields to encrypt before sending to the server */
+  request?: DeepEncryptionMap;
+  /** Map of response fields to decrypt after receiving from the server */
+  response?: DeepEncryptionMap;
+};
+
 /**
  * Base types for Zod schemas representing request and response structures.
  * These are abstract—each concrete endpoint will define its own Zod object for these.
@@ -23,7 +64,7 @@ export type EndpointDef<
   TRes extends ResponseSchema,
 > = {
   /** HTTP method used by this endpoint */
-  method: "GET" | "POST" | "PUT" | "DELETE" | "PATCH";
+  method: Method;
 
   /** URL path for this endpoint, e.g. "/users/:id" */
   path: string;
@@ -43,6 +84,12 @@ export type EndpointDef<
    * - Or a static mock response object
    */
   mockData?: (() => z.infer<TRes>) | z.infer<TRes>;
+
+  /**
+   * Field-level encryption configuration.
+   * Allows selecting specific fields in request/response to be encrypted/decrypted.
+   */
+  encryption?: EncryptionConfig<z.infer<TReq>, z.infer<TRes>>;
 
   /**
    * Optional custom headers. Can be:
@@ -86,13 +133,33 @@ export type Contracts = {
 };
 
 /**
- * Context passed to all middleware functions.
- * Contains the current request URL and initialization object
- * (headers, method, body, etc.).
+ * Convenience alias that pins both generic types
+ * to `z.ZodTypeAny`, simplifying the contract declarations.
  */
-export interface MiddlewareContext {
+export type EndpointDefZ = EndpointDef<RequestSchema, ResponseSchema>;
+
+/**
+ * Context passed to all middleware functions.
+ * Contains the current request URL, initialization object,
+ * and the specific endpoint definition for metadata access.
+ */
+export type RequestParts = {
+  path?: Record<string, unknown>;
+  query?: Record<string, unknown>;
+  body?: unknown;
+  headers: Record<string, string>;
+  isStructured: boolean;
+  rawInput?: unknown;
+};
+
+export interface MiddlewareContext<
+  TReq extends RequestSchema = RequestSchema,
+  TRes extends ResponseSchema = ResponseSchema,
+> {
   url: string;
   init: RequestInit;
+  endpoint: EndpointDef<TReq, TRes>;
+  request?: RequestParts;
 }
 
 /**
@@ -116,8 +183,12 @@ export type MiddlewareNext = () => Promise<Response>;
  *   return res;
  * };
  */
-export type Middleware<Options = any> = (
-  ctx: MiddlewareContext,
+export type Middleware<
+  TReq extends RequestSchema = RequestSchema,
+  TRes extends ResponseSchema = ResponseSchema,
+  Options = any,
+> = (
+  ctx: MiddlewareContext<TReq, TRes>,
   next: MiddlewareNext,
   options?: Options,
 ) => Promise<Response>;
@@ -134,12 +205,6 @@ export type ErrorLike = {
   code?: string; // Application-level error code (optional)
   [key: string]: any; // Any additional arbitrary fields
 };
-
-/**
- * Convenience alias that pins both generic types
- * to `z.ZodTypeAny`, simplifying the contract declarations.
- */
-export type EndpointDefZ = EndpointDef<RequestSchema, ResponseSchema>;
 
 /**
  * RequestOptions

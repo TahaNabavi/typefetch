@@ -4,4 +4,5 @@ export * from "./middlewares/logging";
 export * from "./middlewares/retry";
 export * from "./middlewares/auth";
 export * from "./middlewares/cache";
-export * from "./utils/make-request-schema"
+export * from "./middlewares/encryption";
+export * from "./utils/make-request-schema";

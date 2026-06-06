@@ -1,10 +1,11 @@
 import { z, ZodError } from "zod";
 import { ApiClient, RichError } from "../client";
 import { Contracts } from "../types";
+import { makeRequestSchema } from "../utils/make-request-schema";
 
 global.fetch = jest.fn();
 
-const contracts: Contracts = {
+const contracts = {
   user: {
     getUser: {
       method: "GET",
@@ -33,6 +34,127 @@ const contracts: Contracts = {
       response: z.array(z.object({ id: z.string(), name: z.string() })),
       // No mock data for this endpoint
     },
+    getUserById: {
+      method: "GET",
+      path: "/users/:id",
+      request: makeRequestSchema<
+        { id: z.ZodString },
+        {
+          include: z.ZodOptional<z.ZodString>;
+          active: z.ZodOptional<z.ZodBoolean>;
+        }
+      >()({
+        path: z.object({
+          id: z.string(),
+        }),
+        query: z.object({
+          include: z.string().optional(),
+          active: z.boolean().optional(),
+        }),
+      }),
+      response: z.object({
+        id: z.string(),
+        name: z.string(),
+      }),
+    },
+
+    updateUserStructured: {
+      method: "PATCH",
+      path: "/users/:id",
+      request: makeRequestSchema<
+        { id: z.ZodString },
+        {},
+        z.ZodObject<{
+          name: z.ZodString;
+          age: z.ZodOptional<z.ZodNumber>;
+        }>
+      >()({
+        path: z.object({
+          id: z.string(),
+        }),
+        body: z.object({
+          name: z.string(),
+          age: z.number().optional(),
+        }),
+        headers: z.record(z.string()).optional(),
+      }),
+      response: z.object({
+        id: z.string(),
+        name: z.string(),
+        age: z.number().optional(),
+      }),
+    },
+
+    searchUsersStructured: {
+      method: "GET",
+      path: "/users/search",
+      request: makeRequestSchema<
+        {},
+        {
+          q: z.ZodString;
+          tags: z.ZodOptional<z.ZodArray<z.ZodString>>;
+          page: z.ZodOptional<z.ZodNumber>;
+        }
+      >()({
+        query: z.object({
+          q: z.string(),
+          tags: z.array(z.string()).optional(),
+          page: z.number().optional(),
+        }),
+        headers: z.record(z.string()).optional(),
+      }),
+      response: z.array(
+        z.object({
+          id: z.string(),
+          name: z.string(),
+        }),
+      ),
+    },
+
+    createUserStructured: {
+      method: "POST",
+      path: "/users",
+      request: makeRequestSchema<
+        {},
+        {},
+        z.ZodObject<{
+          name: z.ZodString;
+        }>
+      >()({
+        body: z.object({
+          name: z.string(),
+        }),
+      }),
+      response: z.object({
+        id: z.string(),
+        name: z.string(),
+      }),
+    },
+
+    uploadAvatar: {
+      method: "POST",
+      path: "/users/:id/avatar",
+      bodyType: "form-data",
+      request: makeRequestSchema<
+        { id: z.ZodString },
+        {},
+        z.ZodObject<{
+          file: z.ZodString;
+          alt: z.ZodOptional<z.ZodString>;
+        }>
+      >()({
+        path: z.object({
+          id: z.string(),
+        }),
+        body: z.object({
+          file: z.string(),
+          alt: z.string().optional(),
+        }),
+      }),
+      response: z.object({
+        uploaded: z.boolean(),
+      }),
+    },
   },
   admin: {
     // Add this missing module
@@ -45,7 +167,7 @@ const contracts: Contracts = {
       mockData: { secret: "admin-secret" },
     },
   },
-};
+} satisfies Contracts;
 
 describe("ApiClient", () => {
   let client: ApiClient<typeof contracts>;
@@ -868,6 +990,509 @@ describe("ApiClient", () => {
       const result = await client.modules.user.getUser({ id: "1" });
 
       expect(result).toEqual({ id: "mock-1", name: "Mock User" });
+    });
+  });
+
+  describe("Structured Request Parts Feature", () => {
+    it("should replace path params and append query params for structured GET requests", async () => {
+      (fetch as jest.Mock).mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ id: "123", name: "John" }),
+      });
+
+      const result = await client.modules.user.getUserById({
+        path: { id: "123" },
+        query: {
+          include: "roles",
+          active: true,
+        },
+      });
+
+      expect(fetch).toHaveBeenCalledWith(
+        "https://api.test.com/users/123?include=roles&active=true",
+        {
+          method: "GET",
+          headers: { "Content-Type": "application/json" },
+          body: undefined,
+        },
+      );
+
+      expect(result).toEqual({ id: "123", name: "John" });
+    });
+
+    it("should URL encode path params", async () => {
+      (fetch as jest.Mock).mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ id: "user 123", name: "John" }),
+      });
+
+      await client.modules.user.getUserById({
+        path: { id: "user 123" },
+        query: {},
+      });
+
+      expect(fetch).toHaveBeenCalledWith(
+        "https://api.test.com/users/user%20123",
+        {
+          method: "GET",
+          headers: { "Content-Type": "application/json" },
+          body: undefined,
+        },
+      );
+    });
+
+    it("should send only structured body for non-GET requests", async () => {
+      (fetch as jest.Mock).mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ id: "123", name: "Taha", age: 22 }),
+      });
+
+      const result = await client.modules.user.updateUserStructured({
+        path: { id: "123" },
+        body: {
+          name: "Taha",
+          age: 22,
+        },
+      });
+
+      expect(fetch).toHaveBeenCalledWith("https://api.test.com/users/123", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name: "Taha",
+          age: 22,
+        }),
+      });
+
+      expect(result).toEqual({ id: "123", name: "Taha", age: 22 });
+    });
+
+    it("should merge structured request headers into fetch headers", async () => {
+      (fetch as jest.Mock).mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ id: "123", name: "Taha" }),
+      });
+
+      await client.modules.user.updateUserStructured({
+        path: { id: "123" },
+        headers: {
+          "X-Tenant": "main",
+          "X-Request-Source": "test-suite",
+        },
+        body: {
+          name: "Taha",
+        },
+      });
+
+      expect(fetch).toHaveBeenCalledWith("https://api.test.com/users/123", {
+        method: "PATCH",
+        headers: {
+          "Content-Type": "application/json",
+          "X-Tenant": "main",
+          "X-Request-Source": "test-suite",
+        },
+        body: JSON.stringify({
+          name: "Taha",
+        }),
+      });
+    });
+
+    it("should append array query params by repeating the same query key", async () => {
+      (fetch as jest.Mock).mockResolvedValueOnce({
+        ok: true,
+        json: async () => [
+          { id: "1", name: "John" },
+          { id: "2", name: "Alice" },
+        ],
+      });
+
+      const result = await client.modules.user.searchUsersStructured({
+        query: {
+          q: "dev",
+          tags: ["react", "node"],
+          page: 2,
+        },
+      });
+
+      expect(fetch).toHaveBeenCalledWith(
+        "https://api.test.com/users/search?q=dev&tags=react&tags=node&page=2",
+        {
+          method: "GET",
+          headers: { "Content-Type": "application/json" },
+          body: undefined,
+        },
+      );
+
+      expect(result).toEqual([
+        { id: "1", name: "John" },
+        { id: "2", name: "Alice" },
+      ]);
+    });
+
+    it("should allow structured POST with only body and no path/query/headers", async () => {
+      (fetch as jest.Mock).mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ id: "1", name: "Taha" }),
+      });
+
+      const result = await client.modules.user.createUserStructured({
+        body: {
+          name: "Taha",
+        },
+      });
+
+      expect(fetch).toHaveBeenCalledWith("https://api.test.com/users", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name: "Taha",
+        }),
+      });
+
+      expect(result).toEqual({ id: "1", name: "Taha" });
+    });
+
+    it("should not send a body for structured GET even when body exists in schema input", async () => {
+      const weirdGetContracts = {
+        user: {
+          getWithBodyIgnored: {
+            method: "GET",
+            path: "/users/:id",
+            request: makeRequestSchema<
+              { id: z.ZodString },
+              {},
+              z.ZodObject<{ ignored: z.ZodString }>
+            >()({
+              path: z.object({
+                id: z.string(),
+              }),
+              body: z.object({
+                ignored: z.string(),
+              }),
+            }),
+            response: z.object({
+              id: z.string(),
+            }),
+          },
+        },
+      } satisfies Contracts;
+
+      const weirdClient = new ApiClient(
+        { baseUrl: "https://api.test.com" },
+        weirdGetContracts,
+      );
+
+      weirdClient.init();
+
+      (fetch as jest.Mock).mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ id: "123" }),
+      });
+
+      await weirdClient.modules.user.getWithBodyIgnored({
+        path: { id: "123" },
+        body: { ignored: "do-not-send" },
+      });
+
+      expect(fetch).toHaveBeenCalledWith("https://api.test.com/users/123", {
+        method: "GET",
+        headers: { "Content-Type": "application/json" },
+        body: undefined,
+      });
+    });
+
+    it("should throw validation error when structured path params are invalid", async () => {
+      await expect(
+        client.modules.user.getUserById({
+          path: {},
+          query: {},
+        } as any),
+      ).rejects.toThrow();
+
+      expect(fetch).not.toHaveBeenCalled();
+    });
+
+    it("should preserve legacy GET behavior", async () => {
+      (fetch as jest.Mock).mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ id: "1", name: "John" }),
+      });
+
+      await client.modules.user.getUser({ id: "1" });
+
+      expect(fetch).toHaveBeenCalledWith("https://api.test.com/user", {
+        method: "GET",
+        headers: { "Content-Type": "application/json" },
+        body: undefined,
+      });
+    });
+
+    it("should preserve legacy POST behavior", async () => {
+      const authedClient = new ApiClient(
+        {
+          baseUrl: "https://api.test.com",
+          token: "mytoken",
+        },
+        contracts,
+      );
+
+      authedClient.init();
+
+      (fetch as jest.Mock).mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ id: "2", name: "Alice" }),
+      });
+
+      await authedClient.modules.user.createUser({ name: "Alice" });
+
+      expect(fetch).toHaveBeenCalledWith("https://api.test.com/user", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: "Bearer mytoken",
+        },
+        body: JSON.stringify({ name: "Alice" }),
+      });
+    });
+
+    it("should send structured form-data body without Content-Type json header", async () => {
+      (fetch as jest.Mock).mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ uploaded: true }),
+      });
+
+      const result = await client.modules.user.uploadAvatar({
+        path: { id: "123" },
+        body: {
+          file: "fake-file-content",
+          alt: "Avatar",
+        },
+      });
+
+      expect(fetch).toHaveBeenCalledTimes(1);
+
+      const [url, init] = (fetch as jest.Mock).mock.calls[0] as [
+        string,
+        RequestInit,
+      ];
+
+      expect(url).toBe("https://api.test.com/users/123/avatar");
+      expect(init.method).toBe("POST");
+      expect(init.headers).toEqual({});
+      expect(init.body).toBeInstanceOf(FormData);
+
+      const form = init.body as FormData;
+
+      expect(form.get("file")).toBe("fake-file-content");
+      expect(form.get("alt")).toBe("Avatar");
+
+      expect(result).toEqual({ uploaded: true });
+    });
+  });
+
+  describe("Structured Request Parts Feature", () => {
+    it("should replace path params and append query params for structured GET requests", async () => {
+      (fetch as jest.Mock).mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ id: "123", name: "John" }),
+      });
+
+      const result = await client.modules.user.getUserById({
+        path: { id: "123" },
+        query: { include: "roles", active: true },
+      });
+
+      expect(fetch).toHaveBeenCalledWith(
+        "https://api.test.com/users/123?include=roles&active=true",
+        {
+          method: "GET",
+          headers: { "Content-Type": "application/json" },
+          body: undefined,
+        },
+      );
+
+      expect(result).toEqual({ id: "123", name: "John" });
+    });
+
+    it("should URL encode path params", async () => {
+      (fetch as jest.Mock).mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ id: "user 123", name: "John" }),
+      });
+
+      await client.modules.user.getUserById({
+        path: { id: "user 123" },
+        query: {},
+      });
+
+      expect(fetch).toHaveBeenCalledWith(
+        "https://api.test.com/users/user%20123",
+        {
+          method: "GET",
+          headers: { "Content-Type": "application/json" },
+          body: undefined,
+        },
+      );
+    });
+
+    it("should send only structured body for non-GET requests", async () => {
+      (fetch as jest.Mock).mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ id: "123", name: "Taha", age: 22 }),
+      });
+
+      const result = await client.modules.user.updateUserStructured({
+        path: { id: "123" },
+        body: { name: "Taha", age: 22 },
+      });
+
+      expect(fetch).toHaveBeenCalledWith("https://api.test.com/users/123", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name: "Taha", age: 22 }),
+      });
+
+      expect(result).toEqual({ id: "123", name: "Taha", age: 22 });
+    });
+
+    it("should merge structured request headers into fetch headers", async () => {
+      (fetch as jest.Mock).mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ id: "123", name: "Taha" }),
+      });
+
+      await client.modules.user.updateUserStructured({
+        path: { id: "123" },
+        headers: {
+          "X-Tenant": "main",
+          "X-Request-Source": "test-suite",
+        },
+        body: { name: "Taha" },
+      });
+
+      expect(fetch).toHaveBeenCalledWith("https://api.test.com/users/123", {
+        method: "PATCH",
+        headers: {
+          "Content-Type": "application/json",
+          "X-Tenant": "main",
+          "X-Request-Source": "test-suite",
+        },
+        body: JSON.stringify({ name: "Taha" }),
+      });
+    });
+
+    it("should append array query params by repeating the same query key", async () => {
+      (fetch as jest.Mock).mockResolvedValueOnce({
+        ok: true,
+        json: async () => [
+          { id: "1", name: "John" },
+          { id: "2", name: "Alice" },
+        ],
+      });
+
+      const result = await client.modules.user.searchUsersStructured({
+        query: { q: "dev", tags: ["react", "node"], page: 2 },
+      });
+
+      expect(fetch).toHaveBeenCalledWith(
+        "https://api.test.com/users/search?q=dev&tags=react&tags=node&page=2",
+        {
+          method: "GET",
+          headers: { "Content-Type": "application/json" },
+          body: undefined,
+        },
+      );
+
+      expect(result).toEqual([
+        { id: "1", name: "John" },
+        { id: "2", name: "Alice" },
+      ]);
+    });
+
+    it("should allow structured POST with only body", async () => {
+      (fetch as jest.Mock).mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ id: "1", name: "Taha" }),
+      });
+
+      const result = await client.modules.user.createUserStructured({
+        body: { name: "Taha" },
+      });
+
+      expect(fetch).toHaveBeenCalledWith("https://api.test.com/users", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name: "Taha" }),
+      });
+
+      expect(result).toEqual({ id: "1", name: "Taha" });
+    });
+
+    it("should preserve legacy GET behavior", async () => {
+      (fetch as jest.Mock).mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ id: "1", name: "John" }),
+      });
+
+      await client.modules.user.getUser({ id: "1" });
+
+      expect(fetch).toHaveBeenCalledWith("https://api.test.com/user", {
+        method: "GET",
+        headers: { "Content-Type": "application/json" },
+        body: undefined,
+      });
+    });
+
+    it("should preserve legacy POST behavior", async () => {
+      const authedClient = new ApiClient(
+        { baseUrl: "https://api.test.com", token: "mytoken" },
+        contracts,
+      );
+      authedClient.init();
+
+      (fetch as jest.Mock).mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ id: "2", name: "Alice" }),
+      });
+
+      await authedClient.modules.user.createUser({ name: "Alice" });
+
+      expect(fetch).toHaveBeenCalledWith("https://api.test.com/user", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: "Bearer mytoken",
+        },
+        body: JSON.stringify({ name: "Alice" }),
+      });
+    });
+
+    it("should send structured form-data body without Content-Type json header", async () => {
+      (fetch as jest.Mock).mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ uploaded: true }),
+      });
+
+      const result = await client.modules.user.uploadAvatar({
+        path: { id: "123" },
+        body: { file: "fake-file-content", alt: "Avatar" },
+      });
+
+      const [url, init] = (fetch as jest.Mock).mock.calls[0] as [
+        string,
+        RequestInit,
+      ];
+
+      expect(url).toBe("https://api.test.com/users/123/avatar");
+      expect(init.method).toBe("POST");
+      expect(init.headers).toEqual({});
+      expect(init.body).toBeInstanceOf(FormData);
+
+      const form = init.body as FormData;
+      expect(form.get("file")).toBe("fake-file-content");
+      expect(form.get("alt")).toBe("Avatar");
+
+      expect(result).toEqual({ uploaded: true });
     });
   });
 });
