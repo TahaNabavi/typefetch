@@ -233,7 +233,7 @@ export class ApiClient<C extends Contracts, E extends ErrorLike = RichError> {
 
       if (this.responseWrapper) {
         const wrappedSchema = this.responseWrapper(endpoint.response);
-        const parsedWrapped = wrappedSchema.parse(json);
+        const parsedWrapped = wrappedSchema.parse(json) as any;
 
         if (parsedWrapped.success === false) {
           const error = this.createError({
@@ -244,6 +244,7 @@ export class ApiClient<C extends Contracts, E extends ErrorLike = RichError> {
               ? `API_ERROR_${parsedWrapped.code}`
               : "API_ERROR",
           });
+
           this.errorHandler?.(error as any);
           throw error;
         }
@@ -490,7 +491,7 @@ export class ApiClient<C extends Contracts, E extends ErrorLike = RichError> {
     if (err instanceof RichError) return err;
     if (err instanceof z.ZodError) {
       return this.createError({
-        message: `Validation error: ${err.errors.map((e) => e.message).join(", ")}`,
+        message: `Validation error: ${err.issues.map((e) => e.message).join(", ")}`,
         code: "VALIDATION_ERROR",
       });
     }

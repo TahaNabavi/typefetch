@@ -76,7 +76,7 @@ const contracts = {
           name: z.string(),
           age: z.number().optional(),
         }),
-        headers: z.record(z.string()).optional(),
+        headers: z.record(z.string(), z.string()).optional(),
       }),
       response: z.object({
         id: z.string(),
@@ -101,7 +101,7 @@ const contracts = {
           tags: z.array(z.string()).optional(),
           page: z.number().optional(),
         }),
-        headers: z.record(z.string()).optional(),
+        headers: z.record(z.string(), z.string()).optional(),
       }),
       response: z.array(
         z.object({

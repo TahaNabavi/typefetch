@@ -164,7 +164,7 @@ z.object({
   path: z.object({}).optional(),
   query: z.object({}).optional(),
   body: z.any().optional(),
-  headers: z.record(z.string()).optional(),
+  headers: z.record(z.string(), z.string()).optional(),
 });
 ```
 
@@ -195,7 +195,7 @@ const contracts = {
         body: z.object({
           name: z.string(),
         }),
-        headers: z.record(z.string()).optional(),
+        headers: z.record(z.string(), z.string()).optional(),
       }),
       response: z.object({
         id: z.string(),
@@ -261,7 +261,7 @@ const updateUserRequest = makeRequestSchema<
   body: z.object({
     name: z.string(),
   }),
-  headers: z.record(z.string()).optional(),
+  headers: z.record(z.string(), z.string()).optional(),
 });
 ```
 
