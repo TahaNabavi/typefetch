@@ -5,32 +5,39 @@ on:
     branches:
       - main
     paths:
-      - 'package.json'
-      - 'src/**'
-      - 'README.md'
-      - '.github/workflows/publish.yml'
+      - "package.json"
+      - "src/**"
+      - "README.md"
+      - ".github/workflows/publish.yml"
 
 jobs:
-  build-and-publish:
+  publish:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v3
+      - uses: actions/checkout@v4
 
-      - name: Setup Node.js
-        uses: actions/setup-node@v3
+      - uses: actions/setup-node@v4
         with:
           node-version: 20
-          registry-url: https://registry.npmjs.org/
+          registry-url: "https://registry.npmjs.org/"
+
+      - name: Use official npm registry
+        run: npm config set registry https://registry.npmjs.org/
 
       - name: Install dependencies
-        run: npm install
+        run: npm ci
 
-      - name: Build package
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Test
+        run: npm test
+
+      - name: Build
         run: npm run build
 
-      - name: Publish to npm
+      - name: Publish
         run: npm publish --access public
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
