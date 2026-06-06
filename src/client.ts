@@ -394,21 +394,28 @@ export class ApiClient<C extends Contracts, E extends ErrorLike = RichError> {
   }
 
   private applyPathParams(
-    url: string,
+    fullUrl: string,
     pathParams?: Record<string, any>,
   ): string {
-    return url.replace(/:([A-Za-z0-9_]+)/g, (_, key: string) => {
-      const value = pathParams?.[key];
+    const url = new URL(fullUrl);
 
-      if (value === undefined || value === null) {
-        throw this.createError({
-          message: `Missing path param "${key}"`,
-          code: "MISSING_PATH_PARAM",
-        });
-      }
+    const replacedPathname = url.pathname.replace(
+      /:([A-Za-z0-9_]+)/g,
+      (_, key: string) => {
+        const value = pathParams?.[key];
 
-      return encodeURIComponent(String(value));
-    });
+        if (value === undefined || value === null) {
+          throw this.createError({
+            message: `Missing path param "${key}"`,
+            code: "MISSING_PATH_PARAM",
+          });
+        }
+
+        return encodeURIComponent(String(value));
+      },
+    );
+
+    return `${url.origin}${replacedPathname}${url.search}${url.hash}`;
   }
 
   private appendQueryParams(url: string, query?: Record<string, any>): string {
