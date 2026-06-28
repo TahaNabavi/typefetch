@@ -2,7 +2,7 @@
 
 **TypeFetch** is a strongly typed HTTP client for TypeScript projects, built around **Zod** contracts.
 
-Define your API once with Zod schemas, then TypeFetch generates a fully typed client with request validation, response validation, middleware support, retries, mock data, response wrappers, token handling, and structured request support.
+Define your API once with Zod schemas, then TypeFetch generates a fully typed client with request validation, response validation, middleware support, retries, mock data, response wrappers, token handling, structured request support, contract-driven API testing, CLI workflows, and report generation.
 
 ```ts
 const user = await api.user.getUser({
@@ -29,6 +29,68 @@ const user = await api.user.getUser({
 * Normalized error handling with `RichError`
 * Field-level encryption middleware
 * Backward-compatible flat request schemas
+* Contract-driven API test runner
+* Automatic test input generation from Zod schemas
+* Schema, mock, live, and full API test modes
+* Markdown, HTML, and JSON test reports
+* CLI commands for project setup, endpoint listing, API testing, and release documentation
+* Versioned release documentation under `docs/releases`
+
+---
+
+## What's New in v1.6.0
+
+TypeFetch now includes a contract-driven testing layer and CLI tooling.
+
+### Testing runner
+
+The testing runner can discover endpoints from your contracts, generate valid request inputs, run schema/mock/live checks, validate responses, and export reports.
+
+Supported modes:
+
+* `schema` — validates generated or custom request input without network calls
+* `mock` — validates endpoint `mockData` against the response schema
+* `live` — executes real requests through `ApiClient`
+* `full` — runs schema, mock, and live phases where applicable
+
+### CLI
+
+The CLI provides a simple workflow for setting up and running contract tests.
+
+```bash
+typefetch init
+typefetch test --mode full --format markdown,json,html --output ./typefetch-report/report
+typefetch list
+typefetch release-doc --version v1.6.0 --title "CLI & Testing Feature"
+```
+
+### Endpoint test metadata
+
+Endpoints can now include optional `test` metadata for custom inputs, tags, expected errors, destructive endpoint safety, and context-based flows.
+
+```ts
+getUserById: {
+  method: "GET",
+  path: "/users/:id",
+  request: z.object({
+    path: z.object({
+      id: z.string(),
+    }),
+  }),
+  response: z.object({
+    id: z.string(),
+    name: z.string(),
+  }),
+  test: {
+    tags: ["user", "smoke"],
+    input: {
+      path: {
+        id: "user-1",
+      },
+    },
+  },
+}
+```
 
 ---
 
@@ -1101,6 +1163,15 @@ src/
     cache.ts
     auth.ts
     encryption.ts
+
+typefetch.test.config.ts
+typefetch.env.example
+typefetch-report/
+test-fixtures/
+
+docs/
+  releases/
+    v1.6.0-cli-testing.md
 ```
 
 Example:
@@ -1151,6 +1222,21 @@ const user = await api.user.getUser({
 expect(user.name).toBe("Taha");
 ```
 
+Contract-driven API testing can also be run through the TypeFetch CLI.
+
+```bash
+typefetch init
+typefetch test --mode schema
+typefetch test --mode mock
+typefetch test --mode live --base-url http://localhost:3000
+```
+
+Generated reports can be exported as Markdown, HTML, or JSON:
+
+```bash
+typefetch test --mode full --format markdown,json,html --output ./typefetch-report/report
+```
+
 Recommended test coverage:
 
 * Request validation
@@ -1171,6 +1257,20 @@ Recommended test coverage:
 
 ---
 
+## Versioned Release Documentation
+
+Starting with v1.6.0, detailed documentation for larger updates is stored separately under `docs/releases`.
+
+The main README stays focused on quick usage and core concepts, while release files contain deeper implementation notes, migration details, CLI examples, test strategy, and full feature explanations.
+
+Recommended structure:
+
+```txt
+docs/
+  releases/
+    v1.6.0.md
+```
+
 ## Notes
 
 * Always call `client.init()` before using `client.modules`.
@@ -1182,6 +1282,8 @@ Recommended test coverage:
 * `form-data` endpoints should use `bodyType: "form-data"`.
 * Auth tokens are only required for endpoints with `auth: true`.
 * Mock data bypasses network calls but still validates responses.
+* Use `typefetch test --mode schema` for fast contract validation.
+* Keep detailed release documentation in `docs/releases`.
 
 ---
 

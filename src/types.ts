@@ -50,6 +50,63 @@ export type RequestSchema = z.ZodTypeAny;
 export type ResponseSchema = z.ZodTypeAny;
 
 /**
+ * EndpointTestContext
+ * ===================
+ * Shared runtime state used by the API test runner.
+ * It allows one endpoint test to store values that later tests can reuse.
+ */
+export type EndpointTestContext = {
+  data: Record<string, unknown>;
+  get<T = unknown>(key: string): T | undefined;
+  set<T = unknown>(key: string, value: T): void;
+  has(key: string): boolean;
+};
+
+export type EndpointTestInputFactory<TReq> = (
+  ctx: EndpointTestContext,
+) => TReq | Promise<TReq>;
+
+export type EndpointTestAssertion<TReq, TRes> = (result: {
+  input: TReq;
+  response: TRes;
+  ctx: EndpointTestContext;
+}) => void | Promise<void>;
+
+export type EndpointTestCase<TReq, TRes> = {
+  /** Human-readable name shown in the generated report. */
+  name?: string;
+  /** Static input or a factory that can read/write shared test context. */
+  input?: TReq | EndpointTestInputFactory<TReq>;
+  /** Skip this specific case. A string is used as the skip reason. */
+  skip?: boolean | string;
+  /** Expected HTTP status. Defaults to any successful client response. */
+  expectStatus?: number | number[];
+  /** Optional user-defined assertion after a successful response. */
+  expect?: EndpointTestAssertion<TReq, TRes>;
+  /** Per-case timeout in milliseconds. */
+  timeout?: number;
+  /** Tags used by the runner for include/exclude filtering. */
+  tags?: string[];
+};
+
+export type EndpointTestConfig<TReq, TRes> = {
+  /** Disable all generated/manual tests for this endpoint. */
+  enabled?: boolean;
+  /** Tags used by the runner for include/exclude filtering. */
+  tags?: string[];
+  /** Mark endpoints such as DELETE/reset/payment as unsafe for default runs. */
+  destructive?: boolean;
+  /** Default input used when cases are not provided. */
+  input?: TReq | EndpointTestInputFactory<TReq>;
+  /** One or more test cases for this endpoint. */
+  cases?: Array<EndpointTestCase<TReq, TRes>>;
+  /** Runs before the endpoint cases. */
+  setup?: (ctx: EndpointTestContext) => void | Promise<void>;
+  /** Runs after the endpoint cases. */
+  teardown?: (ctx: EndpointTestContext) => void | Promise<void>;
+};
+
+/**
  * EndpointDef
  * ============
  * Defines the structure of a **single API endpoint**, including:
@@ -106,6 +163,11 @@ export type EndpointDef<
    * - `"form-data"`: multipart form
    */
   bodyType?: "json" | "form-data";
+
+  /**
+   * Optional contract-driven tests used by the TypeFetch test runner.
+   */
+  test?: EndpointTestConfig<z.infer<TReq>, z.infer<TRes>>;
 };
 
 /**
