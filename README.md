@@ -1,5 +1,7 @@
 # TypeFetch
 
+![TypeFetch v1.6.0 — Contract Testing Runner & CLI](./docs/assets/typefetch-v1.6.0-banner.png)
+
 **TypeFetch** is a strongly typed HTTP client for TypeScript projects, built around **Zod** contracts.
 
 Define your API once with Zod schemas, then TypeFetch generates a fully typed client with request validation, response validation, middleware support, retries, mock data, response wrappers, token handling, structured request support, contract-driven API testing, CLI workflows, and report generation.
