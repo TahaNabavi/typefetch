@@ -1150,30 +1150,6 @@ Invalid input fails at compile time when possible and at runtime through Zod val
 
 ---
 
-## Recommended Project Structure
-
-```txt
-src/
-  api/
-    contracts.ts
-    client.ts
-  middlewares/
-    logging.ts
-    retry.ts
-    cache.ts
-    auth.ts
-    encryption.ts
-
-typefetch.test.config.ts
-typefetch.env.example
-typefetch-report/
-test-fixtures/
-
-docs/
-  releases/
-    v1.6.0-cli-testing.md
-```
-
 Example:
 
 ```ts
