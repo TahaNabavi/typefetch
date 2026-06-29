@@ -63,7 +63,6 @@ The CLI provides a simple workflow for setting up and running contract tests.
 typefetch init
 typefetch test --mode full --format markdown,json,html --output ./typefetch-report/report
 typefetch list
-typefetch release-doc --version v1.6.0 --title "CLI & Testing Feature"
 ```
 
 ### Endpoint test metadata
