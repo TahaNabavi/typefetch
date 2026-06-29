@@ -1,7 +1,7 @@
 {
   "name": "@tahanabavi/typefetch",
-  "version": "1.6.3",
-  "description": "A strongly typed TypeScript HTTP client powered by Zod contracts, middleware, retries, auth, mock data, response wrappers, and validation.",
+  "version": "1.6.4",
+  "description": "A strongly typed TypeScript HTTP client powered by Zod contracts, middleware, retries, mock data, contract testing, CLI tooling, and report generation.",
   "main": "./dist/index.js",
   "module": "./dist/index.mjs",
   "types": "./dist/index.d.ts",
@@ -42,18 +42,25 @@
     "api-client",
     "typescript",
     "zod",
+    "zod-contracts",
     "type-safe",
     "middleware",
     "sdk",
     "rest",
-    "validation"
+    "validation",
+    "contract-testing",
+    "api-testing",
+    "test-runner",
+    "cli",
+    "developer-tools"
   ],
   "peerDependencies": {
-    "zod": "^3.25.0"
+    "zod": "^4.0.0"
   },
   "dependencies": {
     "crypto-js": "^4.2.0",
-    "node-forge": "^1.4.0"
+    "node-forge": "^1.4.0",
+    "jiti": "^2.7.0"
   },
   "devDependencies": {
     "@types/crypto-js": "^4.2.2",
@@ -62,7 +69,6 @@
     "@types/node-forge": "^1.3.14",
     "jest": "^30.1.3",
     "jest-fetch-mock": "^3.0.3",
-    "jiti": "^2.7.0",
     "rimraf": "^6.0.1",
     "ts-jest": "^29.4.1",
     "ts-node": "^10.9.2",
